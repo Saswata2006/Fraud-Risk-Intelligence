@@ -30,7 +30,7 @@ This project delivers:
 | **Day 3** | **Ensemble Modeling & Model Selection** | **DONE** | Random Forest (`balanced_subsample`), XGBoost (`scale_pos_weight`), chronological tuning, model comparison. |
 | **Day 4** | **Calibration, Threshold Tuning & SHAP** | **DONE** | Platt sigmoid calibration, Brier score/log loss audit, F1 threshold tuning, TreeSHAP, risk tiers. |
 | **Day 5** | **Four-page Streamlit Dashboard** | **DONE** | Train/validation EDA, validation diagnostics, calibrated RF sample scoring with SHAP, CSV batch screening. |
-| **Day 6** | **Model Governance** | PENDING | Model card, audit logs, compliance governance, drift monitoring hooks. |
+| **Day 6** | **Final model audit and deployment readiness** | **DONE** | Frozen holdout evaluation and Community Cloud configuration. |
 | **Day 7** | **Hardening, Testing & Portfolio Delivery** | PENDING | End-to-end integration tests, benchmarking report, production documentation. |
 
 ---
@@ -107,7 +107,7 @@ fraud-risk-intelligence/
 
 ## Validation Benchmark Results (Threshold = 0.5)
 
-All models evaluated strictly on the **same held-out validation partition** ($N = 56,961$, 57 fraudulent transactions). Final test data ($N = 56,962$) remains untouched.
+All models evaluated strictly on the **same held-out validation partition** ($N = 56,961$, 57 fraudulent transactions). Final test data ($N = 56,962$) was reserved for the Day 6 evaluation.
 
 | Model | Average Precision (PR-AUC) | ROC-AUC | Precision | Recall | F1-Score | True Positives (TP) | False Positives (FP) | False Negatives (FN) |
 | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
@@ -153,7 +153,7 @@ To calibrate without target leakage:
 - The training partition ($N = 170,884$) was partitioned chronologically into a **model-fit subset** ($75\%$, $N = 128,163$, 260 frauds) and a **disjoint calibration subset** ($25\%$, $N = 42,721$, 100 frauds).
 - Both models were re-trained on the fit subset with frozen Day 3 hyperparameters.
 - Sigmoid (Platt) calibrators were fitted using `CalibratedClassifierCV(estimator=FrozenEstimator(fitted_clf), method='sigmoid')` strictly on the calibration subset. Wrapping in `FrozenEstimator` strictly guarantees that the base tree ensemble is **never refitted** on calibration data.
-- The final held-out test partition ($N = 56,962$) remained **completely untouched**.
+- The final held-out test partition ($N = 56,962$) was excluded from fitting and selection.
 
 **Validation Calibration Diagnostics ($N = 56,961$, 57 frauds)**:
 
@@ -216,8 +216,8 @@ SHAP values were computed using `shap.TreeExplainer` on the raw tree model outpu
   4. **V11** ($0.047$): Secondary positive risk contributor.
   5. **V10** ($0.041$), **V17** ($0.032$), **V3** ($0.023$), **V16** ($0.018$).
 - **Local Waterfall Attributions**:
-  - **Fraud Case** ([`reports/figures/17_shap_waterfall_fraud.png`](file:///Users/Saswata007/Desktop/fraud-risk-intelligence/reports/figures/17_shap_waterfall_fraud.png)): Negative shifts in V14 and positive shifts in V4 push the raw RF fraud output above baseline; the calibrated $P(\text{Fraud}) > 0.90$.
-  - **Legitimate Case** ([`reports/figures/18_shap_waterfall_legit.png`](file:///Users/Saswata007/Desktop/fraud-risk-intelligence/reports/figures/18_shap_waterfall_legit.png)): Central tendencies across key components hold output at base value, resulting in calibrated $P(\text{Fraud}) < 0.0006$.
+  - **Fraud Case** ([`reports/figures/17_shap_waterfall_fraud.png`](reports/figures/17_shap_waterfall_fraud.png)): Negative shifts in V14 and positive shifts in V4 push the raw RF fraud output above baseline; the calibrated $P(\text{Fraud}) > 0.90$.
+  - **Legitimate Case** ([`reports/figures/18_shap_waterfall_legit.png`](reports/figures/18_shap_waterfall_legit.png)): Central tendencies across key components hold output at base value, resulting in calibrated $P(\text{Fraud}) < 0.0006$.
 
 *Artifacts*: `reports/figures/15_shap_summary.png`, `reports/figures/16_shap_feature_importance.png`, `reports/figures/17_shap_waterfall_fraud.png`, `reports/figures/18_shap_waterfall_legit.png`.
 
@@ -251,9 +251,8 @@ These are descriptive tiers. The dashboard's review flag is a separate decision 
 
 ## Limitations & Next Steps
 1. **Stationarity Assumption**: Chronological partitioning captures temporal ordering across the 2-day dataset window; long-term seasonal concept drift requires continuous retraining hooks.
-2. **Held-Out Test Set Untouched**: The final $20\%$ test partition ($N = 56,962$) has remained strictly held out and will be evaluated once in Day 7 for portfolio-grade reporting.
+2. **Final evaluation**: The final $20\%$ test partition ($N = 56,962$) was scored once on Day 6 after model and threshold selection.
 3. **Remaining Deliverables**:
-   - **Day 6**: Model governance, audit logs, and compliance documentation.
    - **Day 7**: End-to-end integration tests, benchmarking report, and final portfolio delivery.
 
 ---
@@ -286,7 +285,7 @@ python src/run_day4_pipeline.py
 python src/generate_day4_notebook.py
 
 # Day 5 dashboard (uses saved models; does not train)
-streamlit run src/app/dashboard.py
+python -m streamlit run src/app/dashboard.py
 ```
 
 ### 3. Run Complete Automated Test Suite
@@ -300,8 +299,9 @@ Run the full suite after each change; the test count may grow as features are ad
 Verified local launch from the repository root (no `PYTHONPATH` setting required):
 
 ```bash
-cd /Users/Saswata007/Desktop/fraud-risk-intelligence
-.venv/bin/streamlit run src/app/dashboard.py
+python3.12 -m venv .venv
+.venv/bin/python -m pip install -r requirements.txt
+.venv/bin/python -m streamlit run src/app/dashboard.py
 ```
 
 Open the Local URL printed by Streamlit. If Matplotlib cannot write its default cache on your machine, prefix the second command with `MPLCONFIGDIR=/private/tmp`. This is a cache setting, not a Python import path.
@@ -312,6 +312,34 @@ On **Batch Screening**, click **Download 100-row validation demo CSV**, then upl
 
 On **Fraud Prediction**, choose a validation fraud or legitimate example and click **Explain this transaction** for a Plotly TreeSHAP chart. SHAP explains the uncalibrated RF output; the displayed fraud probability comes from the calibrated pipeline. **Review flag** means calibrated probability ≥ the validation-selected threshold. **Risk tier** is a separate label: Low < 0.10, Medium 0.10–< 0.50, High ≥ 0.50.
 
-To regenerate the public demo bundle in a development checkout with the raw CSV and saved Day 1–4 artifacts, run `MPLCONFIGDIR=/private/tmp .venv/bin/python -m src.app.build_demo_data`. This reads only the chronological train and validation prefix and performs inference without fitting a model. The three runtime files above are explicitly exempted from `.gitignore`. They are currently untracked; a Git-based Streamlit Cloud deployment will need them included in the published repository. No deployment is performed by this command.
+To regenerate the public demo bundle in a development checkout with the raw CSV and saved Day 1–4 artifacts, run `MPLCONFIGDIR=/private/tmp .venv/bin/python -m src.app.build_demo_data`. This reads only the chronological train and validation prefix and performs inference without fitting a model. The three runtime files above are explicitly exempted from `.gitignore`. All three are tracked on main. No deployment is performed by this command.
 
 The review flag uses the RF threshold selected on validation (copied from `artifacts/threshold_metadata.json` into the compact summary); tier labels use the independent probability bands Low < 0.10, Medium 0.10–< 0.50, and High ≥ 0.50. All reported model metrics are validation-only. The uploaded CSV is scored as provided and is not used for evaluation or training.
+
+## Day 6 final chronological evaluation
+
+The saved model robust-scales Time, log-transforms Amount with log1p before robust scaling, and passes V1–V28 through. The Day 4 pipeline fits the preprocessor and RF on the first 128,163 training rows and fits sigmoid calibration on the following 42,721. Model selection and F1 threshold selection use the subsequent validation window. Earlier EDA, counts and duplicate audits included the full dataset. The repository records no use of test predictions for fitting or selection. It cannot establish what happened in unrecorded external runs.
+
+The evaluator restored the existing chronological split and scored the last 56,962 transactions once using the saved calibrated pipeline and the persisted cutoff (displayed as 0.390). All test results use that probability vector. The report stores aggregates and the model SHA-256. The dashboard reads its original validation bundle. [Evaluation report](reports/final_test_metrics.json)
+
+| Metric | Validation | Final test |
+|---|---:|---:|
+| Fraud / total | 57 / 56,961 | 75 / 56,962 |
+| Average precision | 0.756553 | 0.791712 |
+| ROC-AUC | 0.965722 | 0.966213 |
+| Precision | 0.930233 | 0.898305 |
+| Recall | 0.701754 | 0.706667 |
+| F1 | 0.800000 | 0.791045 |
+| Brier score | 0.000325 | 0.000419 |
+| Log-loss | 0.002359 | 0.002875 |
+| TN / FP / FN / TP | 56,901 / 3 / 17 / 40 | 56,881 / 6 / 22 / 53 |
+
+Ranking improved by 0.0352 average precision. At the frozen operating point, precision fell by 3.19 percentage points and recall rose by 0.49 points. Both probability losses increased. The short observation window and 75 positive test cases limit conclusions about future fraud patterns.
+
+### Streamlit Community Cloud
+
+1. Publish the reviewed Day 6 changes to the deployment branch when ready. The required RF, demo CSV and summary JSON are already tracked on main.
+2. Sign in to [Community Cloud](https://share.streamlit.io), select **Create app**, then **Yup, I have an app**.
+3. Choose repository `Saswata2006/Fraud-Risk-Intelligence`, branch `main`, and main file `src/app/dashboard.py`.
+4. Under **Advanced settings**, choose Python **3.12** and save. The app uses the root requirements.txt and .streamlit/config.toml. It needs no secrets.
+5. Select **Deploy**, check the build logs, and use the bundled demo CSV to verify Batch Screening. [Streamlit deployment guide](https://docs.streamlit.io/deploy/streamlit-community-cloud/deploy-your-app/deploy)
