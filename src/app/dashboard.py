@@ -126,9 +126,10 @@ def batch_screening() -> None:
     """Validate a user CSV and offer calibrated RF screening results."""
     st.title("Batch Screening")
     st.caption("Upload transactions with Time, Amount, and V1–V28 numeric columns. Optional identifier columns are preserved. No labels are needed.")
+    st.warning("Use anonymized demo data only. Do not upload card numbers, names, or other sensitive customer information. Limit: 5 MiB and 5,000 rows per CSV.")
     st.download_button("Download 100-row validation demo CSV", demo_transactions().to_csv(index=False).encode("utf-8"), "validation_transactions_100.csv", "text/csv")
     st.info("Download the demo CSV above, then upload that same file below to try Batch Screening. It contains 100 validation transactions and the 30 required numerical features, with no labels. Its 10 fraud and 90 legitimate examples are intentionally sampled and do not represent fraud prevalence.")
-    upload = st.file_uploader("Transaction CSV", type="csv")
+    upload = st.file_uploader("Transaction CSV", type="csv", max_upload_size=5)
     if upload is None:
         return
     try:

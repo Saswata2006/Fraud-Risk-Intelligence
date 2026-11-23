@@ -3,6 +3,8 @@
 from pathlib import Path
 import pandas as pd
 import pytest
+
+pytestmark = pytest.mark.dataset
 from src.ingestion.data_loader import load_raw_data
 from src.ingestion.sql_analytics import (
     get_duckdb_connection,

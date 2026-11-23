@@ -62,7 +62,7 @@ Average precision is the primary ranking metric because fraud is rare. The revie
 
 The pages are **Data Intelligence**, **Model Performance**, **Fraud Prediction**, and **Batch Screening**. Download the [100-row validation demo CSV](data/demo/validation_transactions_100.csv) from Batch Screening, upload it, and download the scored results. Its 30 numerical features contain no labels. Ten fraud and 90 legitimate validation examples were selected deliberately, so the sample does not represent prevalence. The app uses [compact validation summaries](data/demo/dashboard_summary.json) and a saved calibrated RF artifact. It does not require the full raw dataset.
 
-Run locally with Python 3.12 from the repository root:
+From a fresh clone, run the dashboard with Python 3.12 from the repository root. The committed calibrated RF and compact demo data support the app without the full ULB CSV:
 
 ```bash
 python3.12 -m venv .venv
@@ -70,15 +70,19 @@ python3.12 -m venv .venv
 .venv/bin/python -m streamlit run src/app/dashboard.py
 ```
 
+Batch Screening accepts anonymized CSVs up to 5 MiB and 5,000 rows. Do not upload card numbers, names, or other sensitive customer data to the public demo.
+
 For Streamlit Community Cloud, choose repository `Saswata2006/Fraud-Risk-Intelligence`, branch `main`, entrypoint `src/app/dashboard.py`, and Python 3.12. The model artifact, demo CSV, summary JSON, and pinned dependencies are tracked. [Streamlit deployment guide](https://docs.streamlit.io/deploy/streamlit-community-cloud/deploy-your-app/deploy)
 
 ## Data and reproducibility
 
-The [ULB dataset](https://www.kaggle.com/datasets/mlg-ulb/creditcardfraud) has 284,807 transactions and 492 fraud cases. Place `creditcard.csv` in `data/raw/` to run the research pipelines and full tests. The original CSV is excluded from Git. The [final evaluation script](src/models/final_evaluation.py) guards against overwriting its existing report. The dashboard reads saved artifacts.
+The [ULB dataset](https://www.kaggle.com/datasets/mlg-ulb/creditcardfraud) has 284,807 transactions and 492 fraud cases. The original CSV is excluded from Git. From a fresh clone, run the dataset-independent tests with the committed demo bundle:
 
 ```bash
-.venv/bin/python -m pytest -q
+.venv/bin/python -m pytest -q -m "not dataset"
 ```
+
+To run the full research test suite or regenerate reports, obtain `creditcard.csv` from the linked dataset and place it in `data/raw/`, then run `.venv/bin/python -m pytest -q`. Tests marked `dataset` require that file and some also use local Day 1–4 model artifacts. The [final evaluation script](src/models/final_evaluation.py) guards against overwriting the existing test report; the final test set should not be rescored for model selection. GitHub Actions runs the dataset-independent command on Python 3.12.
 
 **Stack** · Python 3.12, Pandas, NumPy, DuckDB, scikit-learn, XGBoost, SHAP, Plotly, Streamlit, Matplotlib, Joblib, and Pytest.
 
@@ -89,3 +93,5 @@ This is a research prototype based on anonymized features from roughly two days 
 Dashboard screenshots are pending. The capture list is in [portfolio notes](reports/portfolio_notes.md). Generated [EDA and model figures](reports/figures/) remain available.
 
 The hosted dashboard currently redirects unauthenticated visitors to Streamlit sign-in. Review its sharing settings before using the link in an application.
+
+This repository currently has no `LICENSE` file. Reuse terms for the project code have not been granted, and use of the ULB dataset is subject to its source terms. Add a code license only after the repository owner chooses one and reviews the dataset terms separately.

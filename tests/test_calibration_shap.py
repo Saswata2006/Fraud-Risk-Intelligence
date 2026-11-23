@@ -111,6 +111,32 @@ class TestCalibrationDataSeparation:
         with pytest.raises(ValueError):
             create_calibration_split(small_df, fit_ratio=1.5)
 
+    def test_rejects_unsorted_time_even_with_repeated_indices(self, small_df):
+        """Chronology is checked from Time, not DataFrame index labels."""
+        from src.models.calibration import create_calibration_split
+
+        unsorted = small_df.iloc[[1, 0, *range(2, len(small_df))]].copy()
+        unsorted.index = [0] * len(unsorted)
+        with pytest.raises(ValueError, match="chronological order"):
+            create_calibration_split(unsorted)
+
+    def test_accepts_repeated_indices_when_time_is_ordered(self, small_df):
+        """Valid position-based splits need no index-order assumption."""
+        from src.models.calibration import create_calibration_split
+
+        ordered = small_df.copy()
+        ordered.index = [0] * len(ordered)
+        fit, calibration = create_calibration_split(ordered)
+        assert len(fit) == 225 and len(calibration) == 75
+        assert fit["Time"].max() <= calibration["Time"].min()
+
+    def test_rejects_empty_split(self, small_df):
+        """Small inputs cannot silently produce an empty fit subset."""
+        from src.models.calibration import create_calibration_split
+
+        with pytest.raises(ValueError, match="leave rows"):
+            create_calibration_split(small_df.iloc[:2], fit_ratio=0.1)
+
 
 # ---------------------------------------------------------------------------
 # TASK 2: Calibrated probability bounds

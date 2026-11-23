@@ -6,8 +6,8 @@ calibration subset carved from the training partition.  The workflow:
   1. Split the training DataFrame chronologically: first ``fit_ratio`` fraction
      for model training, remaining fraction for calibrator fitting.
   2. Re-train (or accept) a base classifier on the fit subset only.
-  3. Wrap the fitted classifier in ``CalibratedClassifierCV(method='sigmoid',
-     cv='prefit')`` and fit it on the calibration subset.
+  3. Wrap the fitted classifier in ``FrozenEstimator`` and fit
+     ``CalibratedClassifierCV(method='sigmoid')`` on the calibration subset.
   4. Build a full sklearn Pipeline:  preprocessor -> calibrated_classifier.
 
 SHAP NOTE: SHAP explanations must be computed on the *raw* (uncalibrated)
@@ -64,14 +64,16 @@ def create_calibration_split(
     """
     if not (0.0 < fit_ratio < 1.0):
         raise ValueError(f"fit_ratio must be in (0, 1), got {fit_ratio}")
+    if len(train_df) < 2:
+        raise ValueError("At least two training rows are required for calibration splitting.")
+    if "Time" not in train_df or train_df["Time"].isna().any() or not train_df["Time"].is_monotonic_increasing:
+        raise ValueError("Training rows must have non-null Time values in chronological order.")
 
     n_fit = int(len(train_df) * fit_ratio)
+    if not (0 < n_fit < len(train_df)):
+        raise ValueError("fit_ratio must leave rows in both fit and calibration subsets.")
     fit_df = train_df.iloc[:n_fit].copy()
     calib_df = train_df.iloc[n_fit:].copy()
-
-    # Validation guards
-    assert len(fit_df) + len(calib_df) == len(train_df), "Split mismatch"
-    assert fit_df.index[-1] < calib_df.index[0] or True  # index may be non-monotonic after reset
 
     print(
         f"[calibration] Calibration split:"

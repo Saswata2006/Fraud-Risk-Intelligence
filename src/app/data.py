@@ -16,6 +16,8 @@ ROOT = Path(__file__).resolve().parents[2]
 TRAIN_ROWS = int(EXPECTED_ROWS * 0.60)
 VALIDATION_ROWS = int(EXPECTED_ROWS * 0.20)
 VISIBLE_ROWS = TRAIN_ROWS + VALIDATION_ROWS
+MAX_UPLOAD_BYTES = 5 * 1024 * 1024
+MAX_UPLOAD_ROWS = 5_000
 
 
 def load_visible_data(path: Path = ROOT / "data/raw/creditcard.csv") -> pd.DataFrame:
@@ -96,7 +98,9 @@ def validate_batch(frame: pd.DataFrame) -> pd.DataFrame:
 
 
 def parse_batch_csv(payload: bytes) -> pd.DataFrame:
-    """Parse uploaded CSV bytes, rejecting duplicate names before pandas mangles them."""
+    """Parse a bounded CSV, rejecting duplicate names before pandas mangles them."""
+    if len(payload) > MAX_UPLOAD_BYTES:
+        raise ValueError("CSV exceeds the 5 MiB upload limit.")
     try:
         header = next(csv.reader(io.StringIO(payload.decode("utf-8-sig"), newline="")))
     except (StopIteration, UnicodeError, csv.Error) as error:
@@ -104,9 +108,12 @@ def parse_batch_csv(payload: bytes) -> pd.DataFrame:
     if len(header) != len(set(header)):
         raise ValueError("CSV contains duplicate column names.")
     try:
-        return pd.read_csv(io.BytesIO(payload))
+        frame = pd.read_csv(io.BytesIO(payload))
     except pd.errors.ParserError as error:
         raise ValueError(f"CSV parsing failed: {error}") from error
+    if len(frame) > MAX_UPLOAD_ROWS:
+        raise ValueError("CSV exceeds the 5,000-row screening limit.")
+    return frame
 
 
 def score_batch(frame: pd.DataFrame, pipeline: object, threshold: float) -> pd.DataFrame:

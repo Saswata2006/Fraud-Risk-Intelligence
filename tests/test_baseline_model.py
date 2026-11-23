@@ -4,6 +4,8 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 import pytest
+
+pytestmark = pytest.mark.dataset
 from sklearn.pipeline import Pipeline
 
 from src.ingestion.data_loader import load_raw_data

@@ -40,7 +40,7 @@
 - **Reproducibility**: Explicitly seed all pseudo-random generators (`random_state=42`).
 
 ### 3. Safety & Command Execution
-- Stay strictly within `/Users/Saswata007/Desktop/fraud-risk-intelligence`.
+- Stay strictly within the repository checkout.
 - Do not download datasets, train long models, or push to remotes without explicit user instruction.
 - Never issue destructive commands (`rm -rf`, force resets) without confirmation.
 - Keep tests updated: run `pytest` to verify changes after significant implementations.

@@ -12,6 +12,7 @@ from src.app.data import TRAIN_ROWS, VALIDATION_ROWS, load_demo_summary, load_de
 from src.models.risk_scorer import REQUIRED_COLUMNS
 
 
+@pytest.mark.dataset
 def test_visible_data_excludes_final_test_rows():
     """Only the train and validation prefix is loaded for the dashboard."""
     data = load_visible_data()
@@ -55,6 +56,7 @@ def test_batch_passes_model_features_in_required_order(batch: pd.DataFrame):
     assert model_input.columns.tolist() == REQUIRED_COLUMNS
 
 
+@pytest.mark.dataset
 def test_demo_csv_is_validation_only_and_unlabeled():
     """The published 100-row CSV matches sampled validation feature rows."""
     sample = load_demo_transactions()
@@ -86,6 +88,7 @@ def test_demo_csv_scores_and_export_has_all_decision_columns():
     assert exported["risk_tier"].isin(["Low", "Medium", "High"]).all()
 
 
+@pytest.mark.dataset
 def test_dashboard_summary_excludes_test_partition():
     """Public aggregates match the train/validation prefix and contain no test rows."""
     summary = load_demo_summary()
@@ -102,6 +105,17 @@ def test_uploaded_csv_rejects_duplicate_header(batch: pd.DataFrame):
     payload = payload.replace(b"V1,V2", b"V1,V1")
     with pytest.raises(ValueError, match="duplicate column names"):
         parse_batch_csv(payload)
+
+
+def test_uploaded_csv_size_and_row_limits(batch: pd.DataFrame):
+    """Public CSV input is rejected before scoring when it exceeds either cap."""
+    from src.app.data import MAX_UPLOAD_BYTES, MAX_UPLOAD_ROWS
+
+    with pytest.raises(ValueError, match="5 MiB"):
+        parse_batch_csv(b"x" * (MAX_UPLOAD_BYTES + 1))
+    rows = pd.concat([batch.iloc[[0]]] * (MAX_UPLOAD_ROWS + 1), ignore_index=True)
+    with pytest.raises(ValueError, match="5,000-row"):
+        parse_batch_csv(rows.to_csv(index=False).encode("utf-8"))
 
 
 @pytest.mark.parametrize("change", ["missing", "null", "text", "infinite", "negative_amount", "reserved"])
