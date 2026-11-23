@@ -56,7 +56,7 @@ def create_feature_preprocessor(
     # Amount pipeline
     amount_steps = []
     if use_log1p_amount:
-        amount_steps.append(("log1p", FunctionTransformer(np.log1p, validate=True)))
+        amount_steps.append(("log1p", FunctionTransformer(np.log1p, validate=True, feature_names_out="one-to-one")))
     amount_steps.append(("amount_scaler", scaler_cls()))
     amount_pipe = Pipeline(amount_steps)
 

@@ -1,0 +1,196 @@
+"""Generate Jupyter Notebook for Day 3 Tree Ensembles, Benchmarking & Model Selection."""
+
+import json
+from pathlib import Path
+
+notebook_content = {
+    "cells": [
+        {
+            "cell_type": "markdown",
+            "metadata": {},
+            "source": [
+                "# Day 3: Tree Ensembles (Random Forest & XGBoost), Benchmarking & Model Selection\n",
+                "\n",
+                "**Project**: Explainable Credit Card Fraud Detection & Risk Scoring  \n",
+                "**Goal**: Train Random Forest and XGBoost classifiers, perform chronological hyperparameter tuning on training folds, benchmark against the Logistic Regression baseline on the validation partition, and select the optimal model candidate."
+            ]
+        },
+        {
+            "cell_type": "markdown",
+            "metadata": {},
+            "source": [
+                "## 1. Setup & Environment Initialization\n",
+                "Load libraries and modular components from `src/`."
+            ]
+        },
+        {
+            "cell_type": "code",
+            "execution_count": None,
+            "metadata": {},
+            "outputs": [],
+            "source": [
+                "import sys\n",
+                "from pathlib import Path\n",
+                "\n",
+                "ROOT_DIR = Path.cwd().parent if Path.cwd().name == 'notebooks' else Path.cwd()\n",
+                "if str(ROOT_DIR) not in sys.path:\n",
+                "    sys.path.insert(0, str(ROOT_DIR))\n",
+                "\n",
+                "import numpy as np\n",
+                "import pandas as pd\n",
+                "import matplotlib.pyplot as plt\n",
+                "import plotly.express as px\n",
+                "\n",
+                "from src.ingestion.data_loader import load_raw_data\n",
+                "from src.features.data_split import create_chronological_splits\n",
+                "from src.models.baseline import load_model as load_baseline_model\n",
+                "from src.models.random_forest import train_random_forest_model, load_rf_model, get_rf_feature_importances\n",
+                "from src.models.xgboost_model import tune_xgboost_chronological, train_xgboost_model, load_xgb_model, get_xgb_feature_importances, compute_scale_pos_weight\n",
+                "from src.models.model_comparison import benchmark_models, plot_multi_model_pr_curves, plot_feature_importances_comparison\n",
+                "\n",
+                "pd.set_option('display.float_format', lambda x: '%.4f' % x)\n",
+                "print('Environment initialized successfully.')"
+            ]
+        },
+        {
+            "cell_type": "markdown",
+            "metadata": {},
+            "source": [
+                "## 2. Load Consistent Chronological Partitions\n",
+                "Reusing the identical 60% Train, 20% Validation, and 20% Test chronological splits created on Day 2."
+            ]
+        },
+        {
+            "cell_type": "code",
+            "execution_count": None,
+            "metadata": {},
+            "outputs": [],
+            "source": [
+                "df = load_raw_data(ROOT_DIR / 'data' / 'raw' / 'creditcard.csv')\n",
+                "train_df, val_df, test_df = create_chronological_splits(df)\n",
+                "\n",
+                "X_train, y_train = train_df.drop(columns=['Class']), train_df['Class']\n",
+                "X_val, y_val = val_df.drop(columns=['Class']), val_df['Class']\n",
+                "\n",
+                "print(f\"Train : {len(train_df):,} samples | Fraud: {y_train.sum():,} ({y_train.mean()*100:.4f}%)\")\n",
+                "print(f\"Val   : {len(val_df):,} samples | Fraud: {y_val.sum():,} ({y_val.mean()*100:.4f}%)\")\n",
+                "print(f\"Test  : {len(test_df):,} samples | (Held out untouched)\")"
+            ]
+        },
+        {
+            "cell_type": "markdown",
+            "metadata": {},
+            "source": [
+                "## 3. Load Baseline Logistic Regression & Train Tree Ensembles\n",
+                "- **Random Forest**: Trained with `class_weight='balanced_subsample'` and tree constraints (`max_depth=10`, `min_samples_leaf=2`).\n",
+                "- **XGBoost**: Calibrated with `scale_pos_weight` ($473.68$) and tuned via chronological TimeSeriesSplit folds."
+            ]
+        },
+        {
+            "cell_type": "code",
+            "execution_count": None,
+            "metadata": {},
+            "outputs": [],
+            "source": [
+                "# Load baseline and trained pipelines\n",
+                "baseline_pipe = load_baseline_model(ROOT_DIR / 'artifacts' / 'baseline_logistic_regression.joblib')\n",
+                "rf_pipe = load_rf_model(ROOT_DIR / 'artifacts' / 'random_forest_pipeline.joblib')\n",
+                "xgb_pipe = load_xgb_model(ROOT_DIR / 'artifacts' / 'xgboost_pipeline.joblib')\n",
+                "\n",
+                "models = {\n",
+                "    'Logistic Regression (Baseline)': baseline_pipe,\n",
+                "    'Random Forest': rf_pipe,\n",
+                "    'XGBoost': xgb_pipe,\n",
+                "}\n",
+                "print('All 3 models loaded successfully.')"
+            ]
+        },
+        {
+            "cell_type": "markdown",
+            "metadata": {},
+            "source": [
+                "## 4. Multi-Model Validation Benchmarking (Threshold = 0.5)\n",
+                "We benchmark all 3 models on the identical validation split."
+            ]
+        },
+        {
+            "cell_type": "code",
+            "execution_count": None,
+            "metadata": {},
+            "outputs": [],
+            "source": [
+                "comparison_df = benchmark_models(models, X_val, y_val, threshold=0.5)\n",
+                "display(comparison_df[['model', 'pr_auc', 'roc_auc', 'precision', 'recall', 'f1_score', 'true_positives', 'false_positives', 'false_negatives']])"
+            ]
+        },
+        {
+            "cell_type": "markdown",
+            "metadata": {},
+            "source": [
+                "## 5. Visualizing Precision-Recall Curves\n",
+                "Comparing PR Curves across all three models on the same validation data."
+            ]
+        },
+        {
+            "cell_type": "code",
+            "execution_count": None,
+            "metadata": {},
+            "outputs": [],
+            "source": [
+                "fig_dir = ROOT_DIR / 'reports' / 'figures'\n",
+                "plot_multi_model_pr_curves(models, X_val, y_val, output_dir=fig_dir)\n",
+                "\n",
+                "from IPython.display import Image, display\n",
+                "display(Image(filename=str(fig_dir / '11_precision_recall_comparison.png')))"
+            ]
+        },
+        {
+            "cell_type": "markdown",
+            "metadata": {},
+            "source": [
+                "## 6. Feature Importance Analysis\n",
+                "Visualizing the top features driving predictions in Random Forest (Gini Importance) and XGBoost (Gain)."
+            ]
+        },
+        {
+            "cell_type": "code",
+            "execution_count": None,
+            "metadata": {},
+            "outputs": [],
+            "source": [
+                "plot_feature_importances_comparison(rf_pipe, xgb_pipe, output_dir=fig_dir, top_n=12)\n",
+                "display(Image(filename=str(fig_dir / '12_feature_importance_rf_xgb.png')))"
+            ]
+        },
+        {
+            "cell_type": "markdown",
+            "metadata": {},
+            "source": [
+                "## 7. Model Selection Rationale\n",
+                "- **XGBoost** is selected as the champion model:\n",
+                "  - Highest PR-AUC (**0.7613**) and ROC-AUC (**0.9827**).\n",
+                "  - Reduced False Positives from 1,916 to **169** (>91% reduction) while catching **82.46%** of fraud ($47/57$).\n",
+                "  - Provides the ideal foundation for Day 4 threshold tuning and Day 5 TreeSHAP explainability."
+            ]
+        }
+    ],
+    "metadata": {
+        "kernelspec": {
+            "display_name": "Python 3",
+            "language": "python",
+            "name": "python3"
+        },
+        "language_info": {
+            "name": "python",
+            "version": "3.12.16"
+        }
+    },
+    "nbformat": 4,
+    "nbformat_minor": 5
+}
+
+output_path = Path("notebooks/03_tree_models_and_selection.ipynb")
+with open(output_path, "w", encoding="utf-8") as f:
+    json.dump(notebook_content, f, indent=2)
+
+print(f"Generated notebook at {output_path.resolve()}")
