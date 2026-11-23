@@ -1,5 +1,7 @@
 # Fraud Risk Intelligence
 
+[![CI](https://github.com/Saswata2006/Fraud-Risk-Intelligence/actions/workflows/ci.yml/badge.svg)](https://github.com/Saswata2006/Fraud-Risk-Intelligence/actions/workflows/ci.yml) [![MIT License](https://img.shields.io/badge/license-MIT-blue.svg)](LICENSE)
+
 An explainable credit card fraud detection **research prototype** built on the [ULB Credit Card Fraud Detection dataset](https://www.kaggle.com/datasets/mlg-ulb/creditcardfraud). It compares three classifiers, calibrates fraud probabilities, and presents review decisions in a four-page Streamlit dashboard.
 
 **Selected model** · Calibrated Random Forest
@@ -9,6 +11,22 @@ An explainable credit card fraud detection **research prototype** built on the [
 **Review threshold** · 0.390, selected on validation
 
 **[Hosted dashboard](https://credit-card-fraud-dec.streamlit.app/)** · [Evaluation report](reports/final_test_metrics.json) · [Portfolio notes](reports/portfolio_notes.md)
+
+## Dashboard Preview
+
+**Model Performance** — validation comparisons, precision–recall curves, and calibration diagnostics. [Open full-size screenshot](docs/screenshots/02_model_performance.png).
+
+![Model Performance page showing validation model comparison and diagnostic charts](docs/screenshots/02_model_performance.png)
+
+**Fraud Prediction with SHAP** — a validation sample's calibrated probability, review flag, risk tier, and raw Random Forest feature contributions. [Open full-size screenshot](docs/screenshots/03_fraud_prediction_shap.png).
+
+![Fraud Prediction page showing a flagged validation sample and TreeSHAP contributions](docs/screenshots/03_fraud_prediction_shap.png)
+
+**Data Intelligence** — the class distribution, hourly transaction volume, and fraud rates by amount band. A matching capture is needed.
+
+**Batch Screening** — the demo CSV upload, scored results, and downloadable review queue. A matching capture is needed.
+
+The files currently named `01_data_intelligence.png` and `04_batch_screening.png` show different applications, so they are not presented as evidence of this dashboard.
 
 ## Verified results
 
@@ -90,8 +108,8 @@ To run the full research test suite or regenerate reports, obtain `creditcard.cs
 
 This is a research prototype based on anonymized features from roughly two days of transactions. The short window, 75 positive test cases, and lack of external validation limit generalization claims. Exploratory review costs are illustrative assumptions, not measured savings. Review flags and tiers do not execute payment holds or analyst workflows. The demo sample must not be used to estimate prevalence or performance. Earlier EDA and duplicate audits inspected the full dataset; model fitting, calibration, and selection used their designated partitions. The project has no production monitoring, access control, or regulatory validation.
 
-Dashboard screenshots are pending. The capture list is in [portfolio notes](reports/portfolio_notes.md). Generated [EDA and model figures](reports/figures/) remain available.
+Generated [EDA and model figures](reports/figures/) remain available.
 
 The hosted dashboard currently redirects unauthenticated visitors to Streamlit sign-in. Review its sharing settings before using the link in an application.
 
-This repository currently has no `LICENSE` file. Reuse terms for the project code have not been granted, and use of the ULB dataset is subject to its source terms. Add a code license only after the repository owner chooses one and reviews the dataset terms separately.
+The original project code is available under the [MIT License](LICENSE), copyright 2026 Saswata2006. The ULB/Kaggle dataset and any third-party material retain their own rights and are not relicensed by this file. The raw dataset is excluded from this repository. Screenshot provenance for the two unrelated captures in `docs/screenshots/` has not been established.
