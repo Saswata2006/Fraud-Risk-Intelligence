@@ -1,0 +1,241 @@
+"""Script to generate a fully documented, reproducible Jupyter Notebook for Day 1 EDA."""
+
+import json
+from pathlib import Path
+
+notebook_content = {
+    "cells": [
+        {
+            "cell_type": "markdown",
+            "metadata": {},
+            "source": [
+                "# Day 1: Credit Card Fraud Exploratory Data Analysis & SQL Profiling\n",
+                "\n",
+                "**Project**: Explainable Credit Card Fraud Detection & Risk Scoring  \n",
+                "**Dataset**: Kaggle ULB Credit Card Fraud Detection (284,807 transactions)  \n",
+                "**Goal**: Comprehensive data validation, statistical distribution profiling, DuckDB SQL analytics, and interpretability-oriented visualization."
+            ]
+        },
+        {
+            "cell_type": "markdown",
+            "metadata": {},
+            "source": [
+                "## 1. Setup & Imports\n",
+                "We import core data science libraries and the reusable modular functions authored under `src/`."
+            ]
+        },
+        {
+            "cell_type": "code",
+            "execution_count": None,
+            "metadata": {},
+            "outputs": [],
+            "source": [
+                "import sys\n",
+                "from pathlib import Path\n",
+                "\n",
+                "# Add project root to sys.path\n",
+                "ROOT_DIR = Path.cwd().parent if Path.cwd().name == 'notebooks' else Path.cwd()\n",
+                "if str(ROOT_DIR) not in sys.path:\n",
+                "    sys.path.insert(0, str(ROOT_DIR))\n",
+                "\n",
+                "import numpy as np\n",
+                "import pandas as pd\n",
+                "import matplotlib.pyplot as plt\n",
+                "import plotly.express as px\n",
+                "import duckdb\n",
+                "\n",
+                "from src.ingestion.data_loader import load_raw_data, validate_dataset\n",
+                "from src.ingestion.sql_analytics import run_all_sql_analytics, get_duckdb_connection\n",
+                "from src.features.eda_analysis import (\n",
+                "    compute_class_distribution,\n",
+                "    compute_amount_comparison,\n",
+                "    compute_correlations_with_target,\n",
+                "    compute_amount_bands_summary,\n",
+                ")\n",
+                "\n",
+                "pd.set_option('display.max_columns', 35)\n",
+                "pd.set_option('display.float_format', lambda x: '%.4f' % x)\n",
+                "print('Environment initialized successfully.')"
+            ]
+        },
+        {
+            "cell_type": "markdown",
+            "metadata": {},
+            "source": [
+                "## 2. Data Ingestion & Integrity Validation\n",
+                "We load `data/raw/creditcard.csv` and validate dimensions, types, missing values, duplicates, and financial constraints."
+            ]
+        },
+        {
+            "cell_type": "code",
+            "execution_count": None,
+            "metadata": {},
+            "outputs": [],
+            "source": [
+                "DATA_PATH = ROOT_DIR / 'data' / 'raw' / 'creditcard.csv'\n",
+                "df = load_raw_data(DATA_PATH)\n",
+                "report = validate_dataset(df)\n",
+                "\n",
+                "print(f'Dataset Valid: {report.is_valid}')\n",
+                "print(f'Rows: {report.total_rows:,} | Columns: {report.total_cols}')\n",
+                "print(f'Missing Values: {report.missing_values_count}')\n",
+                "print(f'Duplicate Rows: {report.duplicate_rows_count:,} (Fraud Duplicates: {report.duplicate_fraud_count}, Legit Duplicates: {report.duplicate_legit_count:,})')\n",
+                "print(f'Zero-Dollar Authorizations: {report.zero_amount_count:,} (Zero-Dollar Fraud: {report.zero_amount_fraud_count})')\n",
+                "df.head()"
+            ]
+        },
+        {
+            "cell_type": "markdown",
+            "metadata": {},
+            "source": [
+                "## 3. Class Imbalance Analysis\n",
+                "Evaluating the extreme class imbalance ratio (~578:1) between non-fraud and fraudulent transactions."
+            ]
+        },
+        {
+            "cell_type": "code",
+            "execution_count": None,
+            "metadata": {},
+            "outputs": [],
+            "source": [
+                "dist = compute_class_distribution(df)\n",
+                "print(f\"Legitimate Transactions: {dist['legit_count']:,} ({dist['legit_percentage']:.3f}%)\")\n",
+                "print(f\"Fraudulent Transactions: {dist['fraud_count']:,} ({dist['fraud_percentage']:.3f}%)\")\n",
+                "print(f\"Imbalance Ratio: {dist['imbalance_ratio']}\")\n",
+                "\n",
+                "fig, ax = plt.subplots(1, 2, figsize=(12, 4.5))\n",
+                "ax[0].bar(['Legitimate', 'Fraudulent'], [dist['legit_count'], dist['fraud_count']], color=['#2b5c8f', '#d9534f'], edgecolor='black')\n",
+                "ax[0].set_yscale('log')\n",
+                "ax[0].set_title('Transaction Counts (Log Scale)')\n",
+                "ax[0].grid(axis='y', linestyle='--', alpha=0.5)\n",
+                "\n",
+                "ax[1].bar(['Legitimate', 'Fraudulent'], [dist['legit_percentage'], dist['fraud_percentage']], color=['#2b5c8f', '#d9534f'], edgecolor='black')\n",
+                "ax[1].set_title('Transaction Proportions (%)')\n",
+                "ax[1].grid(axis='y', linestyle='--', alpha=0.5)\n",
+                "plt.tight_layout()\n",
+                "plt.show()"
+            ]
+        },
+        {
+            "cell_type": "markdown",
+            "metadata": {},
+            "source": [
+                "## 4. Transaction Amount Distribution & Skewness\n",
+                "Analyzing the differences in transaction amounts between legitimate and fraudulent behaviors."
+            ]
+        },
+        {
+            "cell_type": "code",
+            "execution_count": None,
+            "metadata": {},
+            "outputs": [],
+            "source": [
+                "amt_comp = compute_amount_comparison(df)\n",
+                "display(amt_comp)\n",
+                "\n",
+                "fig, ax = plt.subplots(figsize=(10, 4))\n",
+                "ax.boxplot([np.log1p(df[df['Class'] == 0]['Amount']), np.log1p(df[df['Class'] == 1]['Amount'])],\n",
+                "           labels=['Legitimate', 'Fraudulent'], patch_artist=True,\n",
+                "           boxprops=dict(facecolor='#cbe3f2', color='#2b5c8f'),\n",
+                "           medianprops=dict(color='#d9534f', linewidth=2))\n",
+                "ax.set_ylabel('Log(Amount + $1)')\n",
+                "ax.set_title('Distribution of Log(Amount + 1) by Class')\n",
+                "ax.grid(axis='y', linestyle='--', alpha=0.5)\n",
+                "plt.show()"
+            ]
+        },
+        {
+            "cell_type": "markdown",
+            "metadata": {},
+            "source": [
+                "## 5. High-Performance SQL Analytics via DuckDB\n",
+                "DuckDB provides vectorized analytical SQL queries to profile transaction volume, financial amounts, and time buckets."
+            ]
+        },
+        {
+            "cell_type": "code",
+            "execution_count": None,
+            "metadata": {},
+            "outputs": [],
+            "source": [
+                "con = get_duckdb_connection(df)\n",
+                "sql_results = run_all_sql_analytics(df)\n",
+                "\n",
+                "print('=== Transaction Distribution & Total Volume ===')\n",
+                "display(sql_results['class_counts'])\n",
+                "\n",
+                "print('\\n=== Amount Descriptive Statistics by Class ===')\n",
+                "display(sql_results['amount_stats'])\n",
+                "\n",
+                "print('\\n=== Fraud Rate by Amount Bracket ===')\n",
+                "display(sql_results['amount_tiers'])"
+            ]
+        },
+        {
+            "cell_type": "markdown",
+            "metadata": {},
+            "source": [
+                "## 6. Feature Correlation & Discriminatory PCA Components\n",
+                "Identifying the PCA anonymized components exhibiting the strongest positive and negative correlations with fraudulent activity."
+            ]
+        },
+        {
+            "cell_type": "code",
+            "execution_count": None,
+            "metadata": {},
+            "outputs": [],
+            "source": [
+                "corr = compute_correlations_with_target(df)\n",
+                "top_neg = corr.head(6)\n",
+                "top_pos = corr.tail(6)\n",
+                "top_corr = pd.concat([top_neg, top_pos])\n",
+                "\n",
+                "plt.figure(figsize=(10, 5))\n",
+                "colors = ['#d9534f' if v > 0 else '#2b5c8f' for v in top_corr.values]\n",
+                "plt.barh(top_corr.index, top_corr.values, color=colors, edgecolor='black', alpha=0.85)\n",
+                "plt.axvline(0, color='black', linewidth=0.8)\n",
+                "plt.title('Top 12 Features Most Correlated with Fraud Target (Class)')\n",
+                "plt.xlabel('Pearson Correlation Coefficient')\n",
+                "plt.grid(axis='x', linestyle='--', alpha=0.5)\n",
+                "plt.tight_layout()\n",
+                "plt.show()"
+            ]
+        },
+        {
+            "cell_type": "markdown",
+            "metadata": {},
+            "source": [
+                "## 7. Key Findings & Next Steps (Day 2/3 Blueprint)\n",
+                "1. **Imbalance**: 0.173% fraud rate (~578:1 ratio) dictates PR-AUC evaluation and cost-sensitive threshold tuning.\n",
+                "2. **Duplicates**: 1,081 duplicates contain 19 fraud cases; dropping them would cause positive class signal loss.\n",
+                "3. **Zero-Dollar Authorizations**: 1,825 transactions are $0.00 with a 1.48% fraud rate (8.6x baseline); create an `is_zero_auth` flag.\n",
+                "4. **Key Discriminators**: V14, V17, V12, V10 (negative correlation) and V4, V11 (positive correlation) show distinct separation.\n",
+                "5. **Temporal Cycle**: Off-peak night hours exhibit higher fraud frequency despite lower total transaction volume."
+            ]
+        }
+    ],
+    "metadata": {
+        "kernelspec": {
+            "display_name": "Python 3",
+            "language": "python",
+            "name": "python3"
+        },
+        "language_info": {
+            "codemirror_mode": {"name": "ipython", "version": 3},
+            "file_extension": ".py",
+            "mimetype": "text/x-python",
+            "name": "python",
+            "nbconvert_exporter": "python",
+            "pygments_lexer": "ipython3",
+            "version": "3.12.16"
+        }
+    },
+    "nbformat": 4,
+    "nbformat_minor": 5
+}
+
+output_path = Path("notebooks/01_exploratory_data_analysis.ipynb")
+with open(output_path, "w", encoding="utf-8") as f:
+    json.dump(notebook_content, f, indent=2)
+
+print(f"Generated notebook at {output_path.resolve()}")
