@@ -28,6 +28,11 @@ artifacts/*
 *.pkl
 *.joblib
 
+# Compact public dashboard bundle (saved RF is unchanged)
+!data/demo/validation_transactions_100.csv
+!data/demo/dashboard_summary.json
+!artifacts/calibrated_rf_pipeline.joblib
+
 # Jupyter Notebook checkpoints
 .ipynb_checkpoints/
 

@@ -4,14 +4,14 @@ Implements global (summary + feature importance) and local (waterfall)
 SHAP explanations using ``shap.TreeExplainer``.
 
 IMPORTANT NOTE ON WHAT SHAP EXPLAINS:
-  SHAP values computed here explain the **raw tree model's decision margin (log-odds output)**
-  (XGBClassifier margin scores / RF raw leaf values), NOT the
+  SHAP values computed here explain the **raw tree model output**
+  (XGBoost margin scores / Random Forest positive-class probability), NOT the
   sigmoid-calibrated probabilities produced by CalibratedClassifierCV.
   
   Platt calibration applies a monotonic sigmoid mapping. While monotonicity preserves
   the global ordinal ranking of overall transaction risk, feature additivity
-  (local efficiency $\sum \phi_i = f(x) - E[f(x)]$) holds strictly on the raw margin
-  scale. It does NOT translate into additive probability contributions because the
+  (local efficiency $\sum \phi_i = f(x) - E[f(x)]$) holds strictly on the raw output
+  scale. It does NOT translate into additive calibrated probability contributions because the
   sigmoid transformation is non-linear and saturates in the tails. Consequently,
   SHAP values reflect the raw tree ensemble's feature contributions before calibration.
 
@@ -46,7 +46,8 @@ def compute_shap_values(
 ) -> Tuple[np.ndarray, np.ndarray, List[str]]:
     """Compute SHAP values using TreeExplainer on the raw (uncalibrated) model.
 
-    SHAP explains the RAW MODEL OUTPUT (log-odds / raw leaf scores), not the
+    SHAP explains the RAW MODEL OUTPUT (XGBoost margin / RF positive-class
+    probability), not the
     calibrated probabilities.  This is intentional: TreeExplainer requires
     direct access to the tree structure, which is not available through
     CalibratedClassifierCV.
@@ -94,7 +95,7 @@ def compute_shap_values(
         f"features={len(feature_names)} | model_type={model_type}"
     )
     print(
-        "[shap] NOTE: These SHAP values explain raw tree log-odds, "
+        "[shap] NOTE: These SHAP values explain raw tree output, "
         "NOT calibrated probabilities."
     )
     return shap_values, X_trans, feature_names
@@ -117,7 +118,7 @@ def plot_shap_summary(
     Shows the distribution of SHAP values for each feature across all
     explained samples.  Positive SHAP = pushes toward FRAUD; Negative = LEGIT.
 
-    SHAP values explain raw model log-odds (pre-calibration).
+    SHAP values explain raw model output (pre-calibration).
 
     Args:
         shap_values: Array of shape (n_samples, n_features).
@@ -141,7 +142,7 @@ def plot_shap_summary(
     )
     plt.title(
         f"SHAP Summary Plot — {model_label}\n"
-        "(explains raw model log-odds, NOT calibrated probabilities)",
+        "(explains raw model output, NOT calibrated probabilities)",
         fontsize=11,
         pad=12,
     )
@@ -166,7 +167,7 @@ def plot_shap_feature_importance(
 ) -> pd.DataFrame:
     """Generate a bar chart of global feature importance (mean |SHAP| values).
 
-    SHAP values explain raw model log-odds (pre-calibration).
+    SHAP values explain raw model output (pre-calibration).
 
     Args:
         shap_values: Array of shape (n_samples, n_features).
@@ -193,10 +194,10 @@ def plot_shap_feature_importance(
         color="steelblue",
         edgecolor="white",
     )
-    ax.set_xlabel("Mean |SHAP Value| (impact on raw log-odds)")
+    ax.set_xlabel("Mean |SHAP Value| (impact on raw model output)")
     ax.set_title(
         f"SHAP Feature Importance — {model_label}\n"
-        f"(Top {top_n} features; explains raw model log-odds, NOT calibrated probabilities)",
+        f"(Top {top_n} features; explains raw model output, NOT calibrated probabilities)",
         fontsize=11,
     )
     ax.grid(axis="x", alpha=0.3)
@@ -229,7 +230,7 @@ def plot_shap_waterfall_local(
     Shows how each feature pushes the model output above or below the
     baseline (expected) value for one specific transaction.
 
-    SHAP values explain raw model log-odds (pre-calibration).
+    SHAP values explain raw model output (pre-calibration).
 
     Args:
         shap_values: Array of shape (n_samples, n_features).
@@ -260,7 +261,7 @@ def plot_shap_waterfall_local(
 
     title_lines = [
         f"SHAP Waterfall — {label.capitalize()} Transaction (index {sample_idx})",
-        "(explains raw model log-odds, NOT calibrated probability)",
+        "(explains raw model output, NOT calibrated probability)",
     ]
     if true_label is not None:
         title_lines.append(f"True Label: {'FRAUD' if true_label == 1 else 'LEGITIMATE'}")

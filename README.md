@@ -29,8 +29,8 @@ This project delivers:
 | **Day 2** | **Splitting, Feature Pipeline & Baseline** | **DONE** | Chronological 60/20/20 split, leakage audit, `log1p` + `RobustScaler` pipeline, Logistic Regression baseline. |
 | **Day 3** | **Ensemble Modeling & Model Selection** | **DONE** | Random Forest (`balanced_subsample`), XGBoost (`scale_pos_weight`), chronological tuning, model comparison. |
 | **Day 4** | **Calibration, Threshold Tuning & SHAP** | **DONE** | Platt sigmoid calibration, Brier score/log loss audit, F1 threshold tuning, TreeSHAP, risk tiers. |
-| **Day 5** | **Explainability & Model Governance** | PENDING | Model card, audit logs, compliance governance, drift monitoring hooks. |
-| **Day 6** | **Interactive Streamlit Dashboard** | PENDING | Live transaction scoring UI, analyst review queue, interactive SHAP visualizer. |
+| **Day 5** | **Four-page Streamlit Dashboard** | **DONE** | Train/validation EDA, validation diagnostics, calibrated RF sample scoring with SHAP, CSV batch screening. |
+| **Day 6** | **Model Governance** | PENDING | Model card, audit logs, compliance governance, drift monitoring hooks. |
 | **Day 7** | **Hardening, Testing & Portfolio Delivery** | PENDING | End-to-end integration tests, benchmarking report, production documentation. |
 
 ---
@@ -87,7 +87,7 @@ fraud-risk-intelligence/
 │   │   └── evaluation.py             # Metrics calculation and diagnostic curves
 │   ├── explainability/
 │   │   └── shap_explainer.py         # TreeExplainer, summary, bar & waterfall plots
-│   ├── app/                          # Streamlit monitoring and scoring UI (Day 6)
+│   ├── app/                          # Four-page Streamlit analyst dashboard
 │   ├── run_day1_eda.py               # Day 1 execution script
 │   ├── run_day2_pipeline.py          # Day 2 execution script
 │   ├── run_day3_pipeline.py          # Day 3 execution script
@@ -205,9 +205,9 @@ Evaluating models at an arbitrary $0.5$ threshold is financially suboptimal. An 
 ---
 
 ### 3. Explainability via SHAP (TreeExplainer)
-SHAP values were computed using `shap.TreeExplainer` on the raw tree model's margin space.
+SHAP values were computed using `shap.TreeExplainer` on the raw tree model output.
 
-> **Scientific Distinction**: SHAP TreeExplainer computes feature contributions on the **raw tree model's decision margin (log-odds output)**, NOT calibrated probabilities. Because sigmoid calibration is non-linear and saturates in the tails ($\sigma'(z) \to 0$ as $|z| \to \infty$), local additivity ($\sum \phi_i = f(x) - E[f(x)]$) holds strictly on the raw margin scale and does not equal additive percentage contributions to calibrated probabilities.
+> **Scientific Distinction**: For the Random Forest, TreeSHAP contributions explain the uncalibrated positive-class probability. For XGBoost, they explain the raw margin. Neither is the calibrated probability. Additivity ($\sum \phi_i = f(x) - E[f(x)]$) applies on the output scale being explained; the contributions are not additive percentage-point changes in calibrated probability.
 
 - **Top Global Features (Mean |SHAP Value| on Calibrated RF)**:
   1. **V14** ($0.110$): Strongest global discriminator for fraud.
@@ -216,7 +216,7 @@ SHAP values were computed using `shap.TreeExplainer` on the raw tree model's mar
   4. **V11** ($0.047$): Secondary positive risk contributor.
   5. **V10** ($0.041$), **V17** ($0.032$), **V3** ($0.023$), **V16** ($0.018$).
 - **Local Waterfall Attributions**:
-  - **Fraud Case** ([`reports/figures/17_shap_waterfall_fraud.png`](file:///Users/Saswata007/Desktop/fraud-risk-intelligence/reports/figures/17_shap_waterfall_fraud.png)): Negative shifts in V14 and positive shifts in V4 push log-odds well above baseline, yielding calibrated $P(\text{Fraud}) > 0.90$.
+  - **Fraud Case** ([`reports/figures/17_shap_waterfall_fraud.png`](file:///Users/Saswata007/Desktop/fraud-risk-intelligence/reports/figures/17_shap_waterfall_fraud.png)): Negative shifts in V14 and positive shifts in V4 push the raw RF fraud output above baseline; the calibrated $P(\text{Fraud}) > 0.90$.
   - **Legitimate Case** ([`reports/figures/18_shap_waterfall_legit.png`](file:///Users/Saswata007/Desktop/fraud-risk-intelligence/reports/figures/18_shap_waterfall_legit.png)): Central tendencies across key components hold output at base value, resulting in calibrated $P(\text{Fraud}) < 0.0006$.
 
 *Artifacts*: `reports/figures/15_shap_summary.png`, `reports/figures/16_shap_feature_importance.png`, `reports/figures/17_shap_waterfall_fraud.png`, `reports/figures/18_shap_waterfall_legit.png`.
@@ -241,18 +241,19 @@ scores_df = predict_risk(
 ```
 
 **Risk Tier Definitions**:
-- **Low Risk** ($P < 0.10$): Automated approval; no human intervention needed.
-- **Medium Risk** ($0.10 \le P < 0.50$): Step-up authentication (SMS OTP, biometric prompt).
-- **High Risk** ($P \ge 0.50$): Immediate temporary hold and routing to fraud analyst queue.
+- **Low Risk** ($P < 0.10$): Low probability label.
+- **Medium Risk** ($0.10 \le P < 0.50$): Intermediate probability label.
+- **High Risk** ($P \ge 0.50$): High probability label.
+
+These are descriptive tiers. The dashboard's review flag is a separate decision at the validation-selected RF threshold; it does not automatically approve, authenticate, or hold a transaction.
 
 ---
 
 ## Limitations & Next Steps
 1. **Stationarity Assumption**: Chronological partitioning captures temporal ordering across the 2-day dataset window; long-term seasonal concept drift requires continuous retraining hooks.
 2. **Held-Out Test Set Untouched**: The final $20\%$ test partition ($N = 56,962$) has remained strictly held out and will be evaluated once in Day 7 for portfolio-grade reporting.
-3. **Upcoming Day 5–7 Deliverables**:
-   - **Day 5**: Model governance, audit logs, and compliance documentation.
-   - **Day 6**: Interactive Streamlit analyst dashboard with real-time SHAP visualizer.
+3. **Remaining Deliverables**:
+   - **Day 6**: Model governance, audit logs, and compliance documentation.
    - **Day 7**: End-to-end integration tests, benchmarking report, and final portfolio delivery.
 
 ---
@@ -283,10 +284,34 @@ python src/run_day4_pipeline.py
 
 # Generate Day 4 Jupyter Notebook
 python src/generate_day4_notebook.py
+
+# Day 5 dashboard (uses saved models; does not train)
+streamlit run src/app/dashboard.py
 ```
 
 ### 3. Run Complete Automated Test Suite
 ```bash
 pytest tests/ -v
 ```
-*(All 56 unit tests pass)*
+Run the full suite after each change; the test count may grow as features are added.
+
+### Day 5 analyst dashboard
+
+Verified local launch from the repository root (no `PYTHONPATH` setting required):
+
+```bash
+cd /Users/Saswata007/Desktop/fraud-risk-intelligence
+.venv/bin/streamlit run src/app/dashboard.py
+```
+
+Open the Local URL printed by Streamlit. If Matplotlib cannot write its default cache on your machine, prefix the second command with `MPLCONFIGDIR=/private/tmp`. This is a cache setting, not a Python import path.
+
+The sidebar opens Data Intelligence, Model Performance, Fraud Prediction, and Batch Screening. The deployed app uses `data/demo/dashboard_summary.json`, `data/demo/validation_transactions_100.csv`, and the unchanged `artifacts/calibrated_rf_pipeline.joblib`. It does **not** need the ignored `data/raw/creditcard.csv` or the other saved model files at runtime. The summary contains train/validation EDA aggregates, validation metrics from saved Day 1–4 artifacts, and downsampled validation curve display points. Reported average precision values come from the full validation artifact, not from the downsampled display points. The final test partition is not accessed.
+
+On **Batch Screening**, click **Download 100-row validation demo CSV**, then upload that file in **Transaction CSV**. Its 100 rows contain exactly the 30 numeric input features (`Time`, `Amount`, `V1`–`V28`) and no label. Ten fraud and 90 legitimate validation examples were deliberately sampled for demonstration; the sample is not representative of population prevalence. The scored download adds calibrated fraud probability, review decision, and risk tier. Optional identifier columns in other uploads are retained. Missing, nonnumeric, nonfinite, negative Time/Amount, duplicate, and output-name collision schemas are rejected.
+
+On **Fraud Prediction**, choose a validation fraud or legitimate example and click **Explain this transaction** for a Plotly TreeSHAP chart. SHAP explains the uncalibrated RF output; the displayed fraud probability comes from the calibrated pipeline. **Review flag** means calibrated probability ≥ the validation-selected threshold. **Risk tier** is a separate label: Low < 0.10, Medium 0.10–< 0.50, High ≥ 0.50.
+
+To regenerate the public demo bundle in a development checkout with the raw CSV and saved Day 1–4 artifacts, run `MPLCONFIGDIR=/private/tmp .venv/bin/python -m src.app.build_demo_data`. This reads only the chronological train and validation prefix and performs inference without fitting a model. The three runtime files above are explicitly exempted from `.gitignore`. They are currently untracked; a Git-based Streamlit Cloud deployment will need them included in the published repository. No deployment is performed by this command.
+
+The review flag uses the RF threshold selected on validation (copied from `artifacts/threshold_metadata.json` into the compact summary); tier labels use the independent probability bands Low < 0.10, Medium 0.10–< 0.50, and High ≥ 0.50. All reported model metrics are validation-only. The uploaded CSV is scored as provided and is not used for evaluation or training.
