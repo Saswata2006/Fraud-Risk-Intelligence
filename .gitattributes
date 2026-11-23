@@ -1,0 +1,2 @@
+# Figures exported by the EDA and model reporting pipelines.
+reports/figures/*.html linguist-generated=true
