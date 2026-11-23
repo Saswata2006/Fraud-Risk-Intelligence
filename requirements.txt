@@ -1,0 +1,18 @@
+# Core Data Manipulation & Storage
+pandas>=2.2.0
+numpy>=1.26.0
+duckdb>=1.0.0
+
+# Machine Learning & Modeling
+scikit-learn>=1.4.0
+xgboost>=2.0.0
+
+# Interpretability & Explainability
+shap>=0.45.0
+
+# Visualization & Application UI
+plotly>=5.20.0
+streamlit>=1.35.0
+
+# Testing & Code Quality
+pytest>=8.0.0
