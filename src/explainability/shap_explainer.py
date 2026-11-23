@@ -1,15 +1,19 @@
-"""SHAP explainability module for tree-based fraud detection models.
+r"""SHAP explainability module for tree-based fraud detection models.
 
 Implements global (summary + feature importance) and local (waterfall)
 SHAP explanations using ``shap.TreeExplainer``.
 
 IMPORTANT NOTE ON WHAT SHAP EXPLAINS:
-  SHAP values computed here explain the **raw tree model's log-odds output**
+  SHAP values computed here explain the **raw tree model's decision margin (log-odds output)**
   (XGBClassifier margin scores / RF raw leaf values), NOT the
   sigmoid-calibrated probabilities produced by CalibratedClassifierCV.
-  Calibration shifts the absolute probability scale but does not change
-  the direction or relative ranking of SHAP contributions from the raw model.
-  Every plot and docstring in this module explicitly states this limitation.
+  
+  Platt calibration applies a monotonic sigmoid mapping. While monotonicity preserves
+  the global ordinal ranking of overall transaction risk, feature additivity
+  (local efficiency $\sum \phi_i = f(x) - E[f(x)]$) holds strictly on the raw margin
+  scale. It does NOT translate into additive probability contributions because the
+  sigmoid transformation is non-linear and saturates in the tails. Consequently,
+  SHAP values reflect the raw tree ensemble's feature contributions before calibration.
 
 FEATURE ALIGNMENT:
   The preprocessor produces 30 output features in order:
@@ -76,11 +80,12 @@ def compute_shap_values(
     explainer = shap.TreeExplainer(raw_clf)
     shap_output = explainer.shap_values(X_trans)
 
-    # For RF with sklearn API, shap_values returns a list [class0, class1]
-    # For XGBoost it returns a 2-D array for the positive class
+    # For RF with sklearn API, shap_values can return a list [class0, class1] or 3D array (N, M, 2)
+    # For XGBoost it returns a 2-D array for the positive class margin
     if isinstance(shap_output, list):
-        # RF: take class 1 SHAP values
         shap_values = shap_output[1]
+    elif isinstance(shap_output, np.ndarray) and shap_output.ndim == 3:
+        shap_values = shap_output[:, :, 1]
     else:
         shap_values = shap_output
 

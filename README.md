@@ -146,73 +146,78 @@ Both tree ensembles consistently identify similar core fraud signals without ass
 
 ## Day 4: Probability Calibration, Threshold Optimization & SHAP Explainability
 
-### 1. Leakage-Safe Probability Calibration
+### 1. Leakage-Safe Probability Calibration with FrozenEstimator
 Raw tree models trained with `scale_pos_weight` (XGBoost) or `class_weight='balanced_subsample'` (Random Forest) produce uncalibrated margin scores that artificially inflate posterior fraud probabilities. 
 
 To calibrate without target leakage:
 - The training partition ($N = 170,884$) was partitioned chronologically into a **model-fit subset** ($75\%$, $N = 128,163$, 260 frauds) and a **disjoint calibration subset** ($25\%$, $N = 42,721$, 100 frauds).
 - Both models were re-trained on the fit subset with frozen Day 3 hyperparameters.
-- Sigmoid (Platt) calibrators were fitted via `CalibratedClassifierCV(method='sigmoid', cv=None, ensemble=False)` strictly on the calibration subset.
+- Sigmoid (Platt) calibrators were fitted using `CalibratedClassifierCV(estimator=FrozenEstimator(fitted_clf), method='sigmoid')` strictly on the calibration subset. Wrapping in `FrozenEstimator` strictly guarantees that the base tree ensemble is **never refitted** on calibration data.
 - The final held-out test partition ($N = 56,962$) remained **completely untouched**.
 
 **Validation Calibration Diagnostics ($N = 56,961$, 57 frauds)**:
 
 | Model | Raw Brier Score | Calibrated Brier Score | Brier Improvement | Raw Log-Loss | Calibrated Log-Loss | Log-Loss Improvement |
 | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
-| **XGBoost (Winner)** | 0.00793 | **0.00044** | **-94.4%** | 0.03991 | **0.00294** | **-92.6%** |
-| **Random Forest** | 0.00076 | **0.00060** | **-21.1%** | 0.01259 | **0.00357** | **-71.6%** |
+| **Calibrated Random Forest (Winner)** | 0.00076 | **0.00032** | **-57.5%** | 0.01259 | **0.00236** | **-81.3%** |
+| **Calibrated XGBoost** | 0.00793 | **0.00071** | **-91.1%** | 0.03991 | **0.00348** | **-91.3%** |
 
 *Artifacts*: `reports/figures/13_reliability_diagram.png/html`, `artifacts/calibration_metrics.json`.
 
 ---
 
 ### 2. Validation-Only Threshold Optimization & Cost-Sensitive Analysis
-Evaluating models at an arbitrary $0.5$ threshold is financially inefficient. A threshold sweep ($0.05 \le \tau \le 0.95$ with step $0.025$) was conducted on the **validation set only**.
+Evaluating models at an arbitrary $0.5$ threshold is financially suboptimal. An extended threshold sweep spanning **$0.005 \le \tau \le 0.95$** (specifically exploring sub-$0.05$ regions) was conducted on the **validation set only**.
 
 **Illustrative Financial Cost Assumptions**:
 - False Positive Cost ($\text{Cost}_{\text{FP}}$): **\$10** (manual analyst review + customer friction).
 - False Negative Cost ($\text{Cost}_{\text{FN}}$): **\$500** (average unrecovered fraud loss per incident).
 
-**Validation Optimal Operating Point (Objective: Maximize F1-Score)**:
+**Validation Optimal Operating Points (F1-Optimal vs. Cost-Optimal)**:
 
-| Model | Optimal Threshold ($\tau^*$) | Precision | Recall | F1-Score | True Positives (TP) | False Positives (FP) | False Negatives (FN) | Financial Cost (\$) |
-| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
-| **Calibrated XGBoost (Winner)** | **0.050** | **0.9545** | **0.7368** | **0.8317** | **42 / 57** | **2** | **15** | **\$7,520** |
-| **Calibrated Random Forest** | **0.050** | **0.9459** | **0.6140** | **0.7447** | **35 / 57** | **2** | **22** | **\$11,020** |
+| Model | Strategy | Threshold ($\tau^*$) | Precision | Recall | F1-Score | TP | FP | FN | Financial Cost (\$) |
+| :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- | :--- |
+| **Calibrated RF (Selected)** | **F1-Optimal** | **0.390** | **0.9302** | **0.7018** | **0.8000** | **40 / 57** | **3** | **17** | **\$8,530** |
+| **Calibrated RF** | **Cost-Optimal** | **0.005** | **0.3802** | **0.8070** | **0.5169** | **46 / 57** | **75** | **11** | **\$6,250** |
+| **Calibrated XGBoost** | **F1-Optimal** | **0.500** | **0.9091** | **0.7018** | **0.7921** | **40 / 57** | **4** | **17** | **\$8,540** |
+| **Calibrated XGBoost** | **Cost-Optimal** | **0.260** | **0.3239** | **0.8070** | **0.4623** | **46 / 57** | **96** | **11** | **\$6,460** |
 
 **Review Budget Analysis ($\text{Precision}@k$ / $\text{Recall}@k$)**:
 - **Budget $k = 50$ reviews**:
-  - Calibrated XGBoost: $\text{Precision}@50 = 84.0\%$, $\text{Recall}@50 = 73.68\%$ (42 / 57 caught).
-  - Calibrated RF: $\text{Precision}@50 = 84.0\%$, $\text{Recall}@50 = 73.68\%$ (42 / 57 caught).
+  - Calibrated RF: $\text{Precision}@50 = 86.0\%$, $\text{Recall}@50 = 75.44\%$ (43 / 57 caught).
+  - Calibrated XGBoost: $\text{Precision}@50 = 82.0\%$, $\text{Recall}@50 = 71.93\%$ (41 / 57 caught).
 - **Budget $k = 100$ reviews**:
-  - Calibrated XGBoost: $\text{Precision}@100 = 42.0\%$, $\text{Recall}@100 = 73.68\%$.
-  - Calibrated RF: $\text{Precision}@100 = 42.0\%$, $\text{Recall}@100 = 73.68\%$.
+  - Calibrated RF: $\text{Precision}@100 = 46.0\%$, $\text{Recall}@100 = 80.70\%$ (46 / 57 caught).
+  - Calibrated XGBoost: $\text{Precision}@100 = 43.0\%$, $\text{Recall}@100 = 75.44\%$ (43 / 57 caught).
 - **Budget $k = 200$ reviews**:
-  - Calibrated XGBoost: $\text{Precision}@200 = 21.5\%$, $\text{Recall}@200 = 75.44\%$ (43 / 57 caught).
-  - Calibrated RF: $\text{Precision}@200 = 22.5\%$, $\text{Recall}@200 = 78.95\%$ (45 / 57 caught).
+  - Calibrated RF: $\text{Precision}@200 = 23.0\%$, $\text{Recall}@200 = 80.70\%$ (46 / 57 caught).
+  - Calibrated XGBoost: $\text{Precision}@200 = 23.0\%$, $\text{Recall}@200 = 80.70\%$ (46 / 57 caught).
 
 **Model Selection Decision**:
-**Calibrated XGBoost** is selected as the production model. At $\tau^* = 0.050$, it delivers an **F1-score of 0.8317** (+0.087 over RF), detects **42 out of 57 fraud cases** (7 more than RF) with only **2 false positives**, and saves **\$3,500** in illustrative financial loss compared to Random Forest.
+**Calibrated Random Forest** is selected as the primary operational model:
+- Achieves the highest F1-score (**$0.8000$** at $\tau = 0.390$).
+- Lowest Brier score (**$0.00032$**) and lowest log-loss (**$0.00236$**).
+- Under cost optimization ($\text{Cost}_{\text{FP}}=\$10, \text{Cost}_{\text{FN}}=\$500$), setting $\tau = 0.005$ captures **$80.70\%$ of all fraud** (46/57) with an expected financial loss of **\$6,250** (\$210 lower than XGBoost).
+- Calibrated XGBoost remains a close finalist ($0.7921$ F1, \$6,460 cost-optimal).
 
 *Artifacts*: `reports/figures/14_threshold_curves.png/html`, `artifacts/threshold_metadata.json`, `artifacts/threshold_evaluation_metrics.csv`.
 
 ---
 
 ### 3. Explainability via SHAP (TreeExplainer)
-SHAP values were computed using `shap.TreeExplainer` on the raw tree model's log-odds margin space. 
+SHAP values were computed using `shap.TreeExplainer` on the raw tree model's margin space.
 
-> **Scientific Distinction**: SHAP explains raw model margin scores (pre-calibration log-odds), NOT calibrated probabilities. Because Platt calibration applies a monotonic sigmoid transformation, feature ranking and directional attribution are strictly preserved.
+> **Scientific Distinction**: SHAP TreeExplainer computes feature contributions on the **raw tree model's decision margin (log-odds output)**, NOT calibrated probabilities. Because sigmoid calibration is non-linear and saturates in the tails ($\sigma'(z) \to 0$ as $|z| \to \infty$), local additivity ($\sum \phi_i = f(x) - E[f(x)]$) holds strictly on the raw margin scale and does not equal additive percentage contributions to calibrated probabilities.
 
-- **Top 10 Global Features (Mean |SHAP Value|)**:
-  1. **V14** ($1.519$): Dominant negative indicator of fraud.
-  2. **V4** ($1.080$): Strong positive indicator pushing risk upward.
-  3. **V12** ($0.970$): Major risk suppressor when values are positive.
-  4. **V10** ($0.615$): High values heavily discount fraud probability.
-  5. **V8** ($0.329$): Bimodal contribution across high and low percentiles.
-  6. **V22** ($0.250$), **V1** ($0.245$), **V25** ($0.229$), **V11** ($0.225$), **V19** ($0.224$).
-- **Local Explanations**:
-  - Correctly flagged fraud transactions exhibit severe negative excursions in **V14** and elevated values in **V4**, driving calibrated fraud risk $> 0.90$.
-  - Legitimate transactions maintain standard PCA profiles with expected base values ($E[f(x)] = -5.86$), holding calibrated probability $< 0.001$.
+- **Top Global Features (Mean |SHAP Value| on Calibrated RF)**:
+  1. **V14** ($0.110$): Strongest global discriminator for fraud.
+  2. **V12** ($0.077$): Negative excursions heavily increase fraud risk.
+  3. **V4** ($0.052$): Positive values elevate fraud margin.
+  4. **V11** ($0.047$): Secondary positive risk contributor.
+  5. **V10** ($0.041$), **V17** ($0.032$), **V3** ($0.023$), **V16** ($0.018$).
+- **Local Waterfall Attributions**:
+  - **Fraud Case** ([`reports/figures/17_shap_waterfall_fraud.png`](file:///Users/Saswata007/Desktop/fraud-risk-intelligence/reports/figures/17_shap_waterfall_fraud.png)): Negative shifts in V14 and positive shifts in V4 push log-odds well above baseline, yielding calibrated $P(\text{Fraud}) > 0.90$.
+  - **Legitimate Case** ([`reports/figures/18_shap_waterfall_legit.png`](file:///Users/Saswata007/Desktop/fraud-risk-intelligence/reports/figures/18_shap_waterfall_legit.png)): Central tendencies across key components hold output at base value, resulting in calibrated $P(\text{Fraud}) < 0.0006$.
 
 *Artifacts*: `reports/figures/15_shap_summary.png`, `reports/figures/16_shap_feature_importance.png`, `reports/figures/17_shap_waterfall_fraud.png`, `reports/figures/18_shap_waterfall_legit.png`.
 
@@ -225,11 +230,11 @@ A production-ready scoring module (`src/models/risk_scorer.py`) applies the cali
 from src.models.calibration import load_calibrated_pipeline
 from src.models.risk_scorer import predict_risk
 
-pipeline = load_calibrated_pipeline("artifacts/calibrated_xgb_pipeline.joblib")
+pipeline = load_calibrated_pipeline("artifacts/calibrated_rf_pipeline.joblib")
 scores_df = predict_risk(
     transactions_df,
     calibrated_pipeline=pipeline,
-    threshold=0.050,
+    threshold=0.390,
     low_cutoff=0.10,
     high_cutoff=0.50,
 )
@@ -284,4 +289,4 @@ python src/generate_day4_notebook.py
 ```bash
 pytest tests/ -v
 ```
-*(All 53 unit tests pass)*
+*(All 56 unit tests pass)*

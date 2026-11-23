@@ -132,6 +132,22 @@ class TestCalibratedProbabilities:
         proba = calibrated_rf_pipeline.predict_proba(X)[:, 1]
         assert proba.sum() > 0.0, "All calibrated probabilities are zero."
 
+    def test_frozen_estimator_prevents_refitting(self, rf_components, calibration_split):
+        """Verify that fit_sigmoid_calibrator uses FrozenEstimator so base trees are not refitted."""
+        from src.models.calibration import fit_sigmoid_calibrator
+        prep, clf = rf_components
+        trees_before = [t.tree_.node_count for t in clf.estimators_]
+
+        _, calib_df = calibration_split
+        X_calib = calib_df[[c for c in calib_df.columns if c != "Class"]]
+        y_calib = calib_df["Class"]
+        X_calib_trans = prep.transform(X_calib)
+
+        cal_clf = fit_sigmoid_calibrator(clf, X_calib_trans, y_calib)
+        trees_after = [t.tree_.node_count for t in clf.estimators_]
+
+        assert trees_before == trees_after, "Base estimator trees were refitted during calibration!"
+
 
 # ---------------------------------------------------------------------------
 # TASK 3: Brier score validity
@@ -191,6 +207,29 @@ class TestThresholdDecisionLogic:
         opt_thr, row = find_optimal_threshold(df, objective="f1")
         assert 0.0 < opt_thr < 1.0, f"Optimal threshold out of range: {opt_thr}"
         assert isinstance(opt_thr, float)
+
+    def test_threshold_search_below_005(self):
+        """Default threshold grid must include values below 0.05."""
+        from src.models.threshold_optimizer import DEFAULT_THRESHOLDS
+        sub_005 = DEFAULT_THRESHOLDS[DEFAULT_THRESHOLDS < 0.05]
+        assert len(sub_005) > 0, "No thresholds below 0.05 in default grid!"
+        assert np.isclose(sub_005.min(), 0.005)
+
+    def test_compare_f1_and_cost_thresholds(self, calibrated_rf_pipeline, small_df):
+        """compare_f1_and_cost_thresholds must return valid F1 and cost optimal points."""
+        from src.models.threshold_optimizer import (
+            compute_threshold_metrics,
+            compare_f1_and_cost_thresholds,
+            DEFAULT_THRESHOLDS,
+        )
+        X = small_df[[c for c in small_df.columns if c != "Class"]]
+        y = small_df["Class"]
+        df = compute_threshold_metrics(calibrated_rf_pipeline, X, y, DEFAULT_THRESHOLDS)
+        (f1_thr, f1_row), (cost_thr, cost_row) = compare_f1_and_cost_thresholds(df)
+        assert 0.0 < f1_thr < 1.0
+        assert 0.0 < cost_thr < 1.0
+        assert "f1" in f1_row
+        assert "financial_cost" in cost_row
 
 
 # ---------------------------------------------------------------------------

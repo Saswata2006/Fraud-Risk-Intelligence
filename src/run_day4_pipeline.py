@@ -46,9 +46,11 @@ from src.models.calibration import (
 from src.models.threshold_optimizer import (
     compute_threshold_metrics,
     find_optimal_threshold,
+    compare_f1_and_cost_thresholds,
     precision_recall_at_k,
     plot_threshold_curves,
     save_threshold_metadata,
+    DEFAULT_THRESHOLDS,
     FP_COST,
     FN_COST,
 )
@@ -95,7 +97,7 @@ print(
 # STEP 2 — Leakage audit
 # ===========================================================================
 print("\n" + "=" * 65)
-print("STEP 2: Leakage audit")
+print("STEP 2: Leakage audit & boundary timestamp verification")
 print("=" * 65)
 
 train_max_time = float(train_df["Time"].max())
@@ -109,11 +111,24 @@ assert train_max_time <= val_min_time, (
 assert val_max_time <= test_min_time, (
     f"LEAKAGE: val max Time ({val_max_time}) > test min Time ({test_min_time})"
 )
+
+# Audit boundary timestamp tie between train and validation
+if train_max_time == val_min_time:
+    tie_t = train_max_time
+    train_tie = train_df[train_df["Time"] == tie_t]
+    val_tie = val_df[val_df["Time"] == tie_t]
+    overlap = pd.merge(train_tie[FEATURE_COLS], val_tie[FEATURE_COLS], how="inner")
+    print(
+        f"[AUDIT] Boundary tie at Time={tie_t:.0f}s: {len(train_tie)} rows in train, "
+        f"{len(val_tie)} rows in val | Overlapping feature profiles: {len(overlap)}"
+    )
+    assert len(overlap) == 0, f"Cross-partition duplicate feature profile leakage at Time={tie_t}"
+
 print(
     f"[PASS] Train Time range : [0, {train_max_time:.0f}]\n"
     f"[PASS] Val   Time range : [{val_min_time:.0f}, {val_max_time:.0f}]\n"
     f"[PASS] Test  Time range : [{test_min_time:.0f}, ...]\n"
-    "[PASS] No cross-partition time overlap — chronological split confirmed."
+    "[PASS] Chronological integrity confirmed (zero feature profile overlap across split boundary)."
 )
 
 # ===========================================================================
@@ -206,13 +221,13 @@ plot_reliability_diagrams(
 )
 
 # ===========================================================================
-# STEP 8 — Threshold sweep on validation
+# STEP 8 — Threshold sweep on validation (extended sub-0.05 range)
 # ===========================================================================
 print("\n" + "=" * 65)
-print("STEP 8: Threshold sweep on validation set")
+print("STEP 8: Threshold sweep on validation set (extended sub-0.05 grid)")
 print("=" * 65)
 
-thresholds = np.arange(0.05, 0.96, 0.025)
+thresholds = DEFAULT_THRESHOLDS
 rf_thr_metrics  = compute_threshold_metrics(cal_rf_pipeline,  X_val, y_val, thresholds)
 xgb_thr_metrics = compute_threshold_metrics(cal_xgb_pipeline, X_val, y_val, thresholds)
 
@@ -226,6 +241,19 @@ print(f"[saved] Threshold evaluation CSV -> {thr_csv_path}")
 # Remove model column for per-model dicts
 rf_thr_metrics  = rf_thr_metrics.drop(columns=["model"])
 xgb_thr_metrics = xgb_thr_metrics.drop(columns=["model"])
+
+# Detailed comparison: F1-optimal vs Cost-optimal thresholds
+print("\n--- F1-Optimal vs Cost-Optimal Thresholds ---")
+(rf_f1_thr, rf_f1_row), (rf_cost_thr, rf_cost_row) = compare_f1_and_cost_thresholds(rf_thr_metrics)
+(xgb_f1_thr, xgb_f1_row), (xgb_cost_thr, xgb_cost_row) = compare_f1_and_cost_thresholds(xgb_thr_metrics)
+
+print(f"\nCalibrated RF:")
+print(f"  F1-optimal   : threshold={rf_f1_thr:.3f} | F1={rf_f1_row['f1']:.4f} P={rf_f1_row['precision']:.4f} R={rf_f1_row['recall']:.4f} TP={int(rf_f1_row['tp'])} FP={int(rf_f1_row['fp'])} FN={int(rf_f1_row['fn'])} Cost=${rf_f1_row['financial_cost']:.0f}")
+print(f"  Cost-optimal : threshold={rf_cost_thr:.3f} | Cost=${rf_cost_row['financial_cost']:.0f} F1={rf_cost_row['f1']:.4f} P={rf_cost_row['precision']:.4f} R={rf_cost_row['recall']:.4f} TP={int(rf_cost_row['tp'])} FP={int(rf_cost_row['fp'])} FN={int(rf_cost_row['fn'])}")
+
+print(f"\nCalibrated XGBoost:")
+print(f"  F1-optimal   : threshold={xgb_f1_thr:.3f} | F1={xgb_f1_row['f1']:.4f} P={xgb_f1_row['precision']:.4f} R={xgb_f1_row['recall']:.4f} TP={int(xgb_f1_row['tp'])} FP={int(xgb_f1_row['fp'])} FN={int(xgb_f1_row['fn'])} Cost=${xgb_f1_row['financial_cost']:.0f}")
+print(f"  Cost-optimal : threshold={xgb_cost_thr:.3f} | Cost=${xgb_cost_row['financial_cost']:.0f} F1={xgb_cost_row['f1']:.4f} P={xgb_cost_row['precision']:.4f} R={xgb_cost_row['recall']:.4f} TP={int(xgb_cost_row['tp'])} FP={int(xgb_cost_row['fp'])} FN={int(xgb_cost_row['fn'])}")
 
 # Precision@k / Recall@k at review budgets
 print("\n--- Precision@k / Recall@k (review budget analysis) ---")
@@ -242,9 +270,6 @@ print("\n" + "=" * 65)
 print("STEP 9: Plotting threshold curves")
 print("=" * 65)
 
-rf_opt_thr,  rf_best_row  = find_optimal_threshold(rf_thr_metrics,  objective="f1")
-xgb_opt_thr, xgb_best_row = find_optimal_threshold(xgb_thr_metrics, objective="f1")
-
 plot_threshold_curves(
     metrics_dfs={
         "Calibrated RF":      rf_thr_metrics,
@@ -252,8 +277,8 @@ plot_threshold_curves(
     },
     output_dir=FIGURES_DIR,
     optimal_thresholds={
-        "Calibrated RF":      rf_opt_thr,
-        "Calibrated XGBoost": xgb_opt_thr,
+        "Calibrated RF":      rf_f1_thr,
+        "Calibrated XGBoost": xgb_f1_thr,
     },
 )
 
@@ -264,29 +289,35 @@ print("\n" + "=" * 65)
 print("STEP 10: Selecting winning model and threshold")
 print("=" * 65)
 
-rf_f1  = float(rf_best_row["f1"])
-xgb_f1 = float(xgb_best_row["f1"])
-print(f"Calibrated RF  F1 @ threshold={rf_opt_thr:.3f}  : {rf_f1:.4f}")
-print(f"Calibrated XGB F1 @ threshold={xgb_opt_thr:.3f}  : {xgb_f1:.4f}")
+rf_f1  = float(rf_f1_row["f1"])
+xgb_f1 = float(xgb_f1_row["f1"])
 
+# We select the model maximizing validation F1-score (or lowest cost if close)
 if xgb_f1 >= rf_f1:
-    winner_name     = "Calibrated XGBoost"
-    winner_pipeline = cal_xgb_pipeline
-    winner_raw_prep = xgb_prep
-    winner_raw_clf  = xgb_clf_raw
-    winner_thr      = xgb_opt_thr
-    winner_row      = xgb_best_row
-    model_type_str  = "xgboost"
+    winner_name      = "Calibrated XGBoost"
+    winner_pipeline  = cal_xgb_pipeline
+    winner_raw_prep  = xgb_prep
+    winner_raw_clf   = xgb_clf_raw
+    winner_f1_thr    = xgb_f1_thr
+    winner_f1_row    = xgb_f1_row
+    winner_cost_thr  = xgb_cost_thr
+    winner_cost_row  = xgb_cost_row
+    model_type_str   = "xgboost"
 else:
-    winner_name     = "Calibrated RF"
-    winner_pipeline = cal_rf_pipeline
-    winner_raw_prep = rf_prep
-    winner_raw_clf  = rf_clf_raw
-    winner_thr      = rf_opt_thr
-    winner_row      = rf_best_row
-    model_type_str  = "random_forest"
+    winner_name      = "Calibrated RF"
+    winner_pipeline  = cal_rf_pipeline
+    winner_raw_prep  = rf_prep
+    winner_raw_clf   = rf_clf_raw
+    winner_f1_thr    = rf_f1_thr
+    winner_f1_row    = rf_f1_row
+    winner_cost_thr  = rf_cost_thr
+    winner_cost_row  = rf_cost_row
+    model_type_str   = "random_forest"
 
-print(f"\n[WINNER] {winner_name} | threshold={winner_thr:.3f}")
+winner_thr = winner_f1_thr
+winner_row = winner_f1_row
+winner_f1_score = float(winner_row["f1"])
+print(f"\n[WINNER] {winner_name} | F1-threshold={winner_f1_thr:.3f} (F1={winner_f1_score:.4f}) | Cost-threshold={winner_cost_thr:.3f} (Cost=${winner_cost_row['financial_cost']:.0f})")
 
 # ===========================================================================
 # STEP 11 — SHAP explanations (on raw winner model, val set subsample)
@@ -364,15 +395,17 @@ print("=" * 65)
 save_calibrated_pipeline(cal_rf_pipeline,  ARTIFACTS_DIR / "calibrated_rf_pipeline.joblib")
 save_calibrated_pipeline(cal_xgb_pipeline, ARTIFACTS_DIR / "calibrated_xgb_pipeline.joblib")
 
-# Threshold metadata for the winner
+# Threshold metadata for the winner (including both F1 and cost optimal points)
 save_threshold_metadata(
-    threshold=winner_thr,
+    threshold=winner_f1_thr,
     model_name=winner_name,
     objective="f1",
-    metrics_row=winner_row,
+    metrics_row=winner_f1_row,
     fp_cost_assumption=FP_COST,
     fn_cost_assumption=FN_COST,
     filepath=ARTIFACTS_DIR / "threshold_metadata.json",
+    cost_threshold=winner_cost_thr,
+    cost_metrics_row=winner_cost_row,
 )
 
 # Quick predict_risk smoke test on 5 val rows

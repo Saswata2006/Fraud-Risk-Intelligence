@@ -28,6 +28,7 @@ import numpy as np
 import pandas as pd
 from sklearn.calibration import CalibratedClassifierCV, CalibrationDisplay
 from sklearn.ensemble import RandomForestClassifier
+from sklearn.frozen import FrozenEstimator
 from sklearn.metrics import brier_score_loss, log_loss
 from sklearn.pipeline import Pipeline
 
@@ -188,8 +189,9 @@ def fit_sigmoid_calibrator(
 ) -> CalibratedClassifierCV:
     """Wrap a pre-fitted classifier with Platt (sigmoid) calibration.
 
-    Uses ``cv=None`` with ``ensemble=False`` so the classifier is NOT re-fitted;
-    only the sigmoid parameters are estimated on (X_calib_trans, y_calib).
+    Uses ``FrozenEstimator(fitted_clf)`` to strictly guarantee that the
+    base classifier is NOT re-fitted during calibration. Only the sigmoid
+    parameters are estimated on (X_calib_trans, y_calib).
 
     Args:
         fitted_clf: Already-trained classifier (RF or XGB).
@@ -199,16 +201,13 @@ def fit_sigmoid_calibrator(
     Returns:
         Fitted CalibratedClassifierCV instance.
     """
-    # cv=None means: use the estimator as-is without cross-fitting.
-    # ensemble=False ensures a single calibrator is fitted (not an ensemble of calibrators).
+    frozen_clf = FrozenEstimator(fitted_clf)
     calibrated_clf = CalibratedClassifierCV(
-        estimator=fitted_clf,
+        estimator=frozen_clf,
         method="sigmoid",
-        cv=None,
-        ensemble=False,
     )
     calibrated_clf.fit(X_calib_trans, y_calib)
-    print(f"[calibration] Sigmoid calibrator fitted on {len(y_calib):,} samples.")
+    print(f"[calibration] Sigmoid calibrator fitted on {len(y_calib):,} samples using FrozenEstimator.")
     return calibrated_clf
 
 

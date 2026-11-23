@@ -32,6 +32,11 @@ from sklearn.pipeline import Pipeline
 FP_COST: float = 10.0    # USD per false positive (illustrative)
 FN_COST: float = 500.0   # USD per false negative (illustrative)
 
+DEFAULT_THRESHOLDS: np.ndarray = np.concatenate([
+    np.arange(0.005, 0.05, 0.005),   # Sub-0.05 range (audit extended search)
+    np.arange(0.05, 0.96, 0.01),     # Standard range with fine 0.01 step
+])
+
 
 # ---------------------------------------------------------------------------
 # Threshold sweep
@@ -49,15 +54,15 @@ def compute_threshold_metrics(
         pipeline: Fitted sklearn Pipeline with ``predict_proba`` method.
         X_val: Validation feature DataFrame.
         y_val: Validation target Series (0/1).
-        thresholds: Array of threshold values in (0, 1).  Defaults to
-            ``np.arange(0.05, 0.96, 0.025)``.
+        thresholds: Array of threshold values in (0, 1). Defaults to
+            ``DEFAULT_THRESHOLDS`` spanning [0.005, 0.95].
 
     Returns:
         DataFrame with columns: threshold, precision, recall, f1,
         tp, fp, tn, fn, financial_cost.
     """
     if thresholds is None:
-        thresholds = np.arange(0.05, 0.96, 0.025)
+        thresholds = DEFAULT_THRESHOLDS
 
     proba = pipeline.predict_proba(X_val)[:, 1]
     y_true = y_val.values
@@ -131,6 +136,22 @@ def find_optimal_threshold(
         f"F1={best_row['f1']:.4f} FP={int(best_row['fp'])} FN={int(best_row['fn'])}"
     )
     return optimal_threshold, best_row
+
+
+def compare_f1_and_cost_thresholds(
+    metrics_df: pd.DataFrame,
+) -> Tuple[Tuple[float, pd.Series], Tuple[float, pd.Series]]:
+    """Compare F1-optimal and cost-optimal operating points.
+
+    Args:
+        metrics_df: DataFrame produced by ``compute_threshold_metrics``.
+
+    Returns:
+        Tuple of ((f1_thr, f1_row), (cost_thr, cost_row)).
+    """
+    f1_thr, f1_row = find_optimal_threshold(metrics_df, objective="f1")
+    cost_thr, cost_row = find_optimal_threshold(metrics_df, objective="financial_cost")
+    return (f1_thr, f1_row), (cost_thr, cost_row)
 
 
 # ---------------------------------------------------------------------------
@@ -272,17 +293,21 @@ def save_threshold_metadata(
     fp_cost_assumption: float,
     fn_cost_assumption: float,
     filepath: Path,
+    cost_threshold: Optional[float] = None,
+    cost_metrics_row: Optional[pd.Series] = None,
 ) -> None:
     """Save threshold selection metadata and all metrics to a JSON file.
 
     Args:
-        threshold: Selected operational threshold.
+        threshold: Selected operational threshold (e.g. F1-optimal).
         model_name: Name of the winning model.
-        objective: Objective used to select the threshold.
-        metrics_row: Full metric row at the optimal threshold.
+        objective: Primary objective used to select the threshold.
+        metrics_row: Metric row at the optimal threshold.
         fp_cost_assumption: Illustrative FP cost (USD).
         fn_cost_assumption: Illustrative FN cost (USD).
         filepath: Destination JSON file path.
+        cost_threshold: Optional cost-optimal threshold.
+        cost_metrics_row: Optional metric row at the cost-optimal threshold.
     """
     filepath = Path(filepath)
     filepath.parent.mkdir(parents=True, exist_ok=True)
@@ -300,10 +325,19 @@ def save_threshold_metadata(
             ),
         },
         "metrics_at_threshold": {
-            k: (int(v) if isinstance(v, (np.integer,)) else float(v))
+            k: (int(v) if isinstance(v, (np.integer, int)) else float(v))
             for k, v in metrics_row.items()
         },
     }
+
+    if cost_threshold is not None and cost_metrics_row is not None:
+        payload["cost_optimal_operating_point"] = {
+            "optimal_threshold": cost_threshold,
+            "metrics": {
+                k: (int(v) if isinstance(v, (np.integer, int)) else float(v))
+                for k, v in cost_metrics_row.items()
+            },
+        }
 
     with open(filepath, "w") as f:
         json.dump(payload, f, indent=2)
