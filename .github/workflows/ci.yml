@@ -18,5 +18,8 @@ jobs:
           cache: pip
       - name: Install dependencies
         run: python -m pip install -r requirements.txt
+      - name: Smoke-test nested Streamlit entrypoint imports
+        run: |
+          python -I -c 'import runpy; import sys; from pathlib import Path; root = Path.cwd(); runpy.run_path("src/app/dashboard.py", run_name="ci_import_check"); from src.app import data; assert callable(data.build_review_queue); assert Path(data.__file__).resolve() == root / "src/app/data.py"; print("Dashboard imports passed")'
       - name: Run tests without the raw dataset
         run: python -m pytest -q -m 'not dataset'
