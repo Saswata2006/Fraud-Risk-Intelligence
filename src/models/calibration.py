@@ -48,9 +48,9 @@ def create_calibration_split(
 ) -> Tuple[pd.DataFrame, pd.DataFrame]:
     """Split the training partition into model-fit and calibration subsets.
 
-    Preserves chronological order: the first ``fit_ratio`` rows go to the
-    model-fit subset; the remaining rows go to the calibration subset.
-    Both subsets are disjoint by construction (index slicing).
+    The first floor(len(train_df) * fit_ratio) positions form the fit subset.
+    Later positions form the calibration subset. Tied elapsed times may span
+    the boundary. Index labels can repeat because slicing uses row positions.
 
     Args:
         train_df: Full training partition DataFrame (must already be
@@ -66,8 +66,13 @@ def create_calibration_split(
         raise ValueError(f"fit_ratio must be in (0, 1), got {fit_ratio}")
     if len(train_df) < 2:
         raise ValueError("At least two training rows are required for calibration splitting.")
-    if "Time" not in train_df or train_df["Time"].isna().any() or not train_df["Time"].is_monotonic_increasing:
-        raise ValueError("Training rows must have non-null Time values in chronological order.")
+    if "Time" not in train_df:
+        raise ValueError("Training rows require a Time column in elapsed seconds.")
+    time = train_df["Time"]
+    if time.dtype.kind not in "ifu" or time.isna().any() or not np.isfinite(time).all():
+        raise ValueError("Time must contain finite numeric elapsed seconds.")
+    if not time.is_monotonic_increasing:
+        raise ValueError("Training rows must be in chronological order by Time.")
 
     n_fit = int(len(train_df) * fit_ratio)
     if not (0 < n_fit < len(train_df)):

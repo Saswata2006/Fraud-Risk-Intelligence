@@ -10,7 +10,7 @@ An explainable credit card fraud detection **research prototype** built on the [
 
 **Review threshold** · 0.390, selected on validation
 
-**[Hosted dashboard](https://credit-card-fraud-dec.streamlit.app/)** · [Evaluation report](reports/final_test_metrics.json) · [Portfolio notes](reports/portfolio_notes.md)
+**[Hosted dashboard](https://credit-card-fraud-dec.streamlit.app/)** · [Model card](docs/MODEL_CARD.md) · [Evaluation report](reports/final_test_metrics.json) · [Portfolio notes](reports/portfolio_notes.md)
 
 ## Dashboard Preview
 
@@ -22,11 +22,7 @@ An explainable credit card fraud detection **research prototype** built on the [
 
 ![Fraud Prediction page showing a flagged validation sample and TreeSHAP contributions](docs/screenshots/03_fraud_prediction_shap.png)
 
-**Data Intelligence** — the class distribution, hourly transaction volume, and fraud rates by amount band. A matching capture is needed.
-
-**Batch Screening** — the demo CSV upload, scored results, and downloadable review queue. A matching capture is needed.
-
-The files currently named `01_data_intelligence.png` and `04_batch_screening.png` show different applications, so they are not presented as evidence of this dashboard.
+The other two pages cover Data Intelligence and Batch Screening. The repository still needs matching screenshots for those pages.
 
 ## Verified results
 
@@ -72,13 +68,19 @@ flowchart TD
     K --> L
 ```
 
-The first 60% of transactions formed the training partition. The calibrated RF fit on its earlier 75%, then used the later 25% for sigmoid calibration with `FrozenEstimator`. The next 20% supported benchmarking and threshold selection. The final 20% was scored once after selection. The pipeline robust-scales `Time`, applies `log1p` and robust scaling to `Amount`, and passes V1–V28 through. XGBoost was a benchmark finalist. The calibrated RF was selected for validation F1 and calibration.
+The first 60% of transactions formed the training partition. The forest and preprocessor fit on its earlier 75%, then a sigmoid calibrator fit on its later 25% with the forest wrapped in `FrozenEstimator`. The next 20% supported benchmarking and threshold selection. The final 20% was scored once after selection. The pipeline robust-scales `Time`, applies `log1p` and robust scaling to `Amount`, and passes V1–V28 through. XGBoost was a benchmark finalist. Validation F1 determined the selected model and threshold.
 
 Average precision is the primary ranking metric because fraud is rare. The review flag uses calibrated probability ≥ 0.390. Risk tiers are separate display labels: Low below 0.10, Medium from 0.10 to below 0.50, and High from 0.50 upward. TreeSHAP explains the RF output before calibration, so its contributions do not add up to the displayed probability.
 
 ## Try the dashboard
 
-The pages are **Data Intelligence**, **Model Performance**, **Fraud Prediction**, and **Batch Screening**. Download the [100-row validation demo CSV](data/demo/validation_transactions_100.csv) from Batch Screening, upload it, and download the scored results. Its 30 numerical features contain no labels. Ten fraud and 90 legitimate validation examples were selected deliberately, so the sample does not represent prevalence. The app uses [compact validation summaries](data/demo/dashboard_summary.json) and a saved calibrated RF artifact. It does not require the full raw dataset.
+Open **Batch Screening** to try the analyst workflow.
+
+1. Download the demo CSV from the page and upload it in **Transaction CSV**. It contains 30 unlabeled numerical inputs. For a custom upload, use the same features and optionally include anonymous text IDs. [100-row validation demo](data/demo/validation_transactions_100.csv)
+2. Check the total scored, review flags and review rate for the whole upload. The queue opens on flagged records, highest probability first. Clear the flag filter to explore all scores or adjust the maximum rows shown. The first queue column gives the original transaction position, starting at 1.
+3. Choose **Download filtered review queue** for exactly the rows on screen or **Download scored CSV** for every transaction in upload order. Both preserve optional IDs. Flags suggest human review. The app takes no payment action.
+
+The demo deliberately contains ten fraud and 90 legitimate validation examples. Use it to try screening and exports. Estimating prevalence or accuracy requires representative labeled data. The dashboard loads the saved calibrated RF and compact train/validation summaries. [Demo metadata](data/demo/dashboard_summary.json)
 
 From a fresh clone, run the dashboard with Python 3.12 from the repository root. The committed calibrated RF and compact demo data support the app without the full ULB CSV:
 
@@ -106,10 +108,8 @@ To run the full research test suite or regenerate reports, obtain `creditcard.cs
 
 ## Limitations
 
-This is a research prototype based on anonymized features from roughly two days of transactions. The short window, 75 positive test cases, and lack of external validation limit generalization claims. Exploratory review costs are illustrative assumptions, not measured savings. Review flags and tiers do not execute payment holds or analyst workflows. The demo sample must not be used to estimate prevalence or performance. Earlier EDA and duplicate audits inspected the full dataset; model fitting, calibration, and selection used their designated partitions. The project has no production monitoring, access control, or regulatory validation.
+This research prototype uses anonymized features from roughly two days of transactions. The short window, 75 positive test cases and lack of external validation limit generalization claims. Exploratory review costs use illustrative assumptions. Earlier EDA and duplicate audits inspected the full dataset. Fitting, calibration and model selection used their designated partitions. Production monitoring, case management, access control and regulatory validation are outside the prototype's scope. [Model card](docs/MODEL_CARD.md)
 
 Generated [EDA and model figures](reports/figures/) remain available.
-
-The hosted dashboard currently redirects unauthenticated visitors to Streamlit sign-in. Review its sharing settings before using the link in an application.
 
 The original project code is available under the [MIT License](LICENSE), copyright 2026 Saswata2006. The ULB/Kaggle dataset and any third-party material retain their own rights and are not relicensed by this file. The raw dataset is excluded from this repository. Screenshot provenance for the two unrelated captures in `docs/screenshots/` has not been established.

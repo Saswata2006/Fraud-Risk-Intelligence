@@ -79,19 +79,11 @@ def calibrated_rf_pipeline(rf_components, calibration_split):
 class TestCalibrationDataSeparation:
     """Verify fit and calib subsets are disjoint and cover the full training partition."""
 
-    def test_disjoint_indices(self, small_df, calibration_split):
-        """fit_df and calib_df must have no overlapping row positions."""
-        from src.models.calibration import create_calibration_split
+    def test_exact_fit_and_calibration_rows(self, small_df, calibration_split):
+        """Each original position occurs exactly once on its designated side."""
         fit_df, calib_df = calibration_split
-        # Verify row positions are disjoint by checking index ranges
-        assert len(fit_df) + len(calib_df) == len(small_df), (
-            f"fit ({len(fit_df)}) + calib ({len(calib_df)}) != total ({len(small_df)})"
-        )
-
-    def test_covers_training_partition(self, small_df, calibration_split):
-        """Union of fit_df and calib_df must equal the full training partition."""
-        fit_df, calib_df = calibration_split
-        assert len(fit_df) + len(calib_df) == len(small_df)
+        pd.testing.assert_frame_equal(fit_df, small_df.iloc[:225])
+        pd.testing.assert_frame_equal(calib_df, small_df.iloc[225:])
 
     def test_chronological_order_preserved(self, small_df, calibration_split):
         """fit_df rows must precede calib_df rows in Time."""
@@ -120,15 +112,25 @@ class TestCalibrationDataSeparation:
         with pytest.raises(ValueError, match="chronological order"):
             create_calibration_split(unsorted)
 
-    def test_accepts_repeated_indices_when_time_is_ordered(self, small_df):
+    def test_accepts_repeated_indices_when_time_is_ordered(self):
         """Valid position-based splits need no index-order assumption."""
         from src.models.calibration import create_calibration_split
 
-        ordered = small_df.copy()
-        ordered.index = [0] * len(ordered)
-        fit, calibration = create_calibration_split(ordered)
-        assert len(fit) == 225 and len(calibration) == 75
-        assert fit["Time"].max() <= calibration["Time"].min()
+        ordered = pd.DataFrame({"Time": [1, 2, 2, 3], "Class": [0, 1, 0, 0]}, index=[0] * 4)
+        fit, calibration = create_calibration_split(ordered, fit_ratio=0.5)
+        pd.testing.assert_frame_equal(fit, ordered.iloc[:2])
+        pd.testing.assert_frame_equal(calibration, ordered.iloc[2:])
+
+    @pytest.mark.parametrize("times", [None, [0, np.nan], [0, np.inf], ["10", "2"]])
+    def test_rejects_invalid_time(self, times):
+        """Missing, nonfinite and lexicographically ordered timestamps are invalid."""
+        from src.models.calibration import create_calibration_split
+
+        frame = pd.DataFrame({"Class": [0, 1]})
+        if times is not None:
+            frame["Time"] = times
+        with pytest.raises(ValueError, match="Time"):
+            create_calibration_split(frame)
 
     def test_rejects_empty_split(self, small_df):
         """Small inputs cannot silently produce an empty fit subset."""
@@ -161,8 +163,10 @@ class TestCalibratedProbabilities:
     def test_frozen_estimator_prevents_refitting(self, rf_components, calibration_split):
         """Verify that fit_sigmoid_calibrator uses FrozenEstimator so base trees are not refitted."""
         from src.models.calibration import fit_sigmoid_calibrator
+        from sklearn.frozen import FrozenEstimator
+
         prep, clf = rf_components
-        trees_before = [t.tree_.node_count for t in clf.estimators_]
+        trees_before = tuple(clf.estimators_)
 
         _, calib_df = calibration_split
         X_calib = calib_df[[c for c in calib_df.columns if c != "Class"]]
@@ -170,9 +174,10 @@ class TestCalibratedProbabilities:
         X_calib_trans = prep.transform(X_calib)
 
         cal_clf = fit_sigmoid_calibrator(clf, X_calib_trans, y_calib)
-        trees_after = [t.tree_.node_count for t in clf.estimators_]
-
-        assert trees_before == trees_after, "Base estimator trees were refitted during calibration!"
+        fitted_base = cal_clf.calibrated_classifiers_[0].estimator
+        assert isinstance(fitted_base, FrozenEstimator)
+        assert fitted_base.estimator is clf
+        assert trees_before == tuple(clf.estimators_)
 
 
 # ---------------------------------------------------------------------------

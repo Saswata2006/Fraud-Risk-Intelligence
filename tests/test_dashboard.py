@@ -8,7 +8,11 @@ import pandas as pd
 import pytest
 
 from src.app.charts import calibration_figure, precision_recall_figure, shap_contribution_figure
-from src.app.data import TRAIN_ROWS, VALIDATION_ROWS, load_demo_summary, load_demo_transactions, load_visible_data, parse_batch_csv, review_threshold, score_batch, validate_batch
+from src.app.data import (
+    MAX_UPLOAD_BYTES, MAX_UPLOAD_ROWS, TRAIN_ROWS, VALIDATION_ROWS, build_review_queue,
+    load_demo_summary, load_demo_transactions, load_visible_data, parse_batch_csv,
+    review_threshold, score_batch, validate_batch,
+)
 from src.models.risk_scorer import REQUIRED_COLUMNS
 
 
@@ -107,15 +111,60 @@ def test_uploaded_csv_rejects_duplicate_header(batch: pd.DataFrame):
         parse_batch_csv(payload)
 
 
-def test_uploaded_csv_size_and_row_limits(batch: pd.DataFrame):
-    """Public CSV input is rejected before scoring when it exceeds either cap."""
-    from src.app.data import MAX_UPLOAD_BYTES, MAX_UPLOAD_ROWS
-
+def test_upload_size_boundary(batch, monkeypatch):
+    payload = batch.to_csv(index=False).encode()
+    payload = payload.replace(b"\na,", b"\na" + b"x" * (MAX_UPLOAD_BYTES - len(payload)) + b",", 1)
+    assert len(payload) == MAX_UPLOAD_BYTES
+    assert len(validate_batch(parse_batch_csv(payload))) == len(batch)
+    monkeypatch.setattr(pd, "read_csv", Mock(side_effect=AssertionError("unbounded CSV parsed")))
     with pytest.raises(ValueError, match="5 MiB"):
-        parse_batch_csv(b"x" * (MAX_UPLOAD_BYTES + 1))
-    rows = pd.concat([batch.iloc[[0]]] * (MAX_UPLOAD_ROWS + 1), ignore_index=True)
+        parse_batch_csv(payload + b"\n")
+
+
+def test_upload_row_boundary_counts_logical_records(batch, monkeypatch):
+    record = batch.iloc[[0]].assign(transaction_id="test,\n001")
+    header, rows = record.to_csv(index=False).encode().split(b"\n", 1)
+    payload = header + b"\n" + rows * MAX_UPLOAD_ROWS
+    parsed = validate_batch(parse_batch_csv(payload))
+    assert len(parsed) == MAX_UPLOAD_ROWS
+    assert parsed.iloc[-1]["transaction_id"] == "test,\n001"
+    monkeypatch.setattr(pd, "read_csv", Mock(side_effect=AssertionError("unbounded CSV parsed")))
     with pytest.raises(ValueError, match="5,000-row"):
-        parse_batch_csv(rows.to_csv(index=False).encode("utf-8"))
+        parse_batch_csv(payload + rows)
+
+
+@pytest.mark.parametrize("payload", [b'id,Time\n"unterminated', b"id,Time\n1,2,3", b"Time\n\xff"])
+def test_malformed_upload_is_rejected(payload):
+    with pytest.raises(ValueError):
+        parse_batch_csv(payload)
+
+
+def test_review_queue_preserves_csv_identity_through_export(batch):
+    from io import StringIO
+
+    frame = pd.concat([batch, batch], ignore_index=True)
+    frame["transaction_id"] = ["0001", "NA", "0001", "1e6"]
+    frame["input_row"] = ["A", "B", "C", "D"]
+    uploaded = parse_batch_csv(frame.to_csv(index=False).encode())
+    pipeline = Mock()
+    pipeline.predict_proba.return_value = np.array([[0.9, 0.1], [0.2, 0.8], [0.2, 0.8], [0.6, 0.4]])
+    scored = score_batch(uploaded, pipeline, review_threshold())
+    snapshot = scored.copy()
+    queue = build_review_queue(scored, flagged_only=True, top_k=2)
+    exported = pd.read_csv(StringIO(queue.to_csv(index=False)), dtype=str, keep_default_na=False)
+    assert exported["_input_row"].tolist() == ["2", "3"]
+    assert exported["input_row"].tolist() == ["B", "C"]
+    assert exported["transaction_id"].tolist() == ["NA", "0001"]
+    assert exported["review_decision"].tolist() == ["True", "True"]
+    assert exported["risk_tier"].tolist() == ["High", "High"]
+    assert exported["fraud_probability"].tolist() == ["0.8", "0.8"]
+    assert build_review_queue(scored, flagged_only=False, top_k=10)["_input_row"].tolist() == [2, 3, 4, 1]
+    flagged = build_review_queue(scored, flagged_only=True, top_k=10)
+    assert flagged["risk_tier"].tolist() == ["High", "High", "Medium"]
+    empty = build_review_queue(scored.iloc[:1], flagged_only=True, top_k=1)
+    assert empty.empty and empty.columns.equals(queue.columns)
+    pd.testing.assert_frame_equal(scored, snapshot)
+    pipeline.predict_proba.assert_called_once()
 
 
 @pytest.mark.parametrize("change", ["missing", "null", "text", "infinite", "negative_amount", "reserved"])
@@ -178,3 +227,54 @@ def test_shap_renders_for_validation_fraud_and_legitimate_samples():
         app.button[0].click().run()
         assert not app.error and not app.exception
         assert len(app.get("plotly_chart")) == 1
+
+
+def test_batch_page_filters_and_downloads_the_displayed_queue(monkeypatch):
+    from io import StringIO
+
+    import streamlit as st
+    from streamlit.testing.v1 import AppTest
+
+    downloads = {}
+    original_download = st.download_button
+
+    def record_download(label, data, file_name, *args, **kwargs):
+        downloads[file_name] = data
+        return original_download(label, data, file_name, *args, **kwargs)
+
+    monkeypatch.setattr(st, "download_button", record_download)
+    root = Path(__file__).resolve().parents[1]
+    app = AppTest.from_file(root / "src/app/dashboard.py", default_timeout=120).run()
+    app.sidebar.radio[0].set_value("Batch Screening").run()
+    payload = (root / "data/demo/validation_transactions_100.csv").read_bytes()
+    app.file_uploader[0].upload("demo.csv", payload, "text/csv").run()
+    assert not app.error and not app.exception
+    full = pd.read_csv(StringIO(downloads["fraud_screening_results.csv"]))
+    flags = full["review_decision"].sum()
+    metrics = {m.label: m.value for m in app.metric}
+    assert metrics["Total scored"] == "100"
+    assert metrics["Review flags"] == str(flags)
+    assert metrics["Review rate"] == f"{flags / len(full):.1%}"
+    assert 0 < flags < len(full)
+    queue = app.dataframe[0].value
+    assert queue["review_decision"].all() and len(queue) == min(25, flags)
+
+    app.checkbox[0].uncheck().run()
+    app.number_input[0].set_value(2).run()
+    assert not app.error and not app.exception
+    assert metrics == {m.label: m.value for m in app.metric}
+    top = pd.read_csv(StringIO(downloads["fraud_review_queue.csv"]))
+    pd.testing.assert_frame_equal(top, app.dataframe[0].value.reset_index(drop=True))
+    expected = full.sort_values("fraud_probability", ascending=False, kind="stable").head(2)
+    assert top["input_row"].tolist() == (expected.index + 1).tolist()
+    assert len(pd.read_csv(StringIO(downloads["fraud_screening_results.csv"]))) == 100
+
+    # Replacing the upload must discard the previous batch, even for the same filename.
+    single = full.loc[~full["review_decision"], REQUIRED_COLUMNS].head(1)
+    app.file_uploader[0].set_value(("demo.csv", single.to_csv(index=False).encode(), "text/csv")).run()
+    app.checkbox[0].check().run()
+    assert not app.error and not app.exception
+    assert {m.label: m.value for m in app.metric}["Total scored"] == "1"
+    empty = pd.read_csv(StringIO(downloads["fraud_review_queue.csv"]))
+    assert empty.empty and empty.columns.tolist() == top.columns.tolist()
+    assert len(pd.read_csv(StringIO(downloads["fraud_screening_results.csv"]))) == 1

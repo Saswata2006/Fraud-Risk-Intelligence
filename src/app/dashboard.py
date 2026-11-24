@@ -16,7 +16,10 @@ import plotly.express as px
 import streamlit as st
 
 from src.app.charts import calibration_summary_figure, precision_recall_summary_figure, shap_contribution_figure
-from src.app.data import ROOT, load_demo_summary, load_demo_transactions, parse_batch_csv, review_threshold, score_batch
+from src.app.data import (
+    ROOT, build_review_queue, load_demo_summary, load_demo_transactions,
+    parse_batch_csv, review_threshold, score_batch,
+)
 from src.explainability.shap_explainer import compute_shap_values
 from src.models.calibration import load_calibrated_pipeline
 
@@ -122,30 +125,63 @@ def fraud_prediction() -> None:
             st.caption("SHAP explains the underlying RF fraud output before sigmoid calibration. Its contributions do not add up to the displayed calibrated probability.")
 
 
+@st.fragment
+def analyst_review_queue(scored: pd.DataFrame) -> None:
+    """Filter the current batch without running model inference again."""
+    st.subheader("Analyst review queue")
+    flagged_only = st.checkbox("Show flagged transactions only", value=True)
+    top_k = st.number_input(
+        "Maximum transactions to show", min_value=1, max_value=len(scored),
+        value=min(25, len(scored)), step=1,
+    )
+    queue = build_review_queue(scored, flagged_only=flagged_only, top_k=top_k)
+    st.caption(
+        f"Showing {len(queue):,} transactions, highest probability first. "
+        f"`{queue.columns[0]}` counts transaction records from 1 in the uploaded CSV. "
+        "Tied scores keep their input order."
+    )
+    if queue.empty:
+        st.info("No transactions meet the review threshold. Clear the filter to see all scores.")
+    st.dataframe(queue, hide_index=True, width="stretch")
+    st.download_button(
+        "Download filtered review queue", queue.to_csv(index=False),
+        "fraud_review_queue.csv", "text/csv", on_click="ignore",
+    )
+
+
 def batch_screening() -> None:
     """Validate a user CSV and offer calibrated RF screening results."""
     st.title("Batch Screening")
     st.caption("Upload transactions with Time, Amount, and V1–V28 numeric columns. Optional identifier columns are preserved. No labels are needed.")
-    st.warning("Use anonymized demo data only. Do not upload card numbers, names, or other sensitive customer information. Limit: 5 MiB and 5,000 rows per CSV.")
+    st.warning("This public demo expects anonymized ULB features. Use the demo CSV or anonymous test records. Keep names, card numbers and real customer identifiers out of uploads. Each CSV may contain up to 5,000 transactions and occupy up to 5 MiB.")
     st.download_button("Download 100-row validation demo CSV", demo_transactions().to_csv(index=False).encode("utf-8"), "validation_transactions_100.csv", "text/csv")
-    st.info("Download the demo CSV above, then upload that same file below to try Batch Screening. It contains 100 validation transactions and the 30 required numerical features, with no labels. Its 10 fraud and 90 legitimate examples are intentionally sampled and do not represent fraud prevalence.")
+    st.info("Download the demo CSV, then upload it below. Its 100 unlabeled validation records deliberately oversample fraud. Use it to try the queue. Estimating accuracy or fraud prevalence requires representative labeled data.")
     upload = st.file_uploader("Transaction CSV", type="csv", max_upload_size=5)
     if upload is None:
         return
     try:
         frame = parse_batch_csv(upload.getvalue())
-        result = score_batch(frame, calibrated_model(), review_threshold())
+        threshold = review_threshold()
+        result = score_batch(frame, calibrated_model(), threshold)
     except (ValueError, pd.errors.ParserError, UnicodeError) as error:
         st.error(f"Could not score CSV: {error}")
         return
     st.success(f"Scored {len(result):,} transactions with the saved calibrated Random Forest.")
-    a, b, c = st.columns(3)
-    a.metric("Review flags", f"{int(result['review_decision'].sum()):,}")
-    b.metric("High risk tier", f"{int((result['risk_tier'] == 'High').sum()):,}")
-    c.metric("Review threshold", f"{review_threshold():.3f}")
-    st.caption(f"Review flag: calibrated probability ≥ {review_threshold():.3f} (validation selected). Risk tiers: Low <10%; Medium 10–<50%; High ≥50%. The review flag is independent of the tier label.")
-    st.dataframe(result, hide_index=True, width="stretch")
-    st.download_button("Download scored CSV", result.to_csv(index=False).encode("utf-8"), "fraud_screening_results.csv", "text/csv")
+    flags = int(result["review_decision"].sum())
+    a, b, c, d = st.columns(4)
+    a.metric("Total scored", f"{len(result):,}")
+    b.metric("Review flags", f"{flags:,}")
+    c.metric("Review rate", f"{flags / len(result):.1%}")
+    d.metric("High risk tier", f"{(result['risk_tier'] == 'High').sum():,}")
+    st.caption(
+        f"A calibrated probability ≥ {threshold:.3f} flags a transaction for human review. "
+        "Payment decisions stay with the analyst. Low scores are below 10%, Medium covers "
+        "10% to below 50%, and High starts at 50%. A Medium transaction can qualify for review."
+    )
+    analyst_review_queue(result)
+    with st.expander("All scored transactions in input order"):
+        st.dataframe(result, hide_index=True, width="stretch")
+    st.download_button("Download scored CSV", result.to_csv(index=False), "fraud_screening_results.csv", "text/csv", on_click="ignore")
 
 
 def main() -> None:

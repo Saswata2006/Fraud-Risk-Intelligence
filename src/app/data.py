@@ -2,9 +2,9 @@
 
 from __future__ import annotations
 
-import json
 import csv
 import io
+import json
 from pathlib import Path
 
 import pandas as pd
@@ -18,6 +18,8 @@ VALIDATION_ROWS = int(EXPECTED_ROWS * 0.20)
 VISIBLE_ROWS = TRAIN_ROWS + VALIDATION_ROWS
 MAX_UPLOAD_BYTES = 5 * 1024 * 1024
 MAX_UPLOAD_ROWS = 5_000
+# The CSV reader's per-field ceiling must accommodate files within the byte cap.
+csv.field_size_limit(max(csv.field_size_limit(), MAX_UPLOAD_BYTES))
 
 
 def load_visible_data(path: Path = ROOT / "data/raw/creditcard.csv") -> pd.DataFrame:
@@ -98,22 +100,28 @@ def validate_batch(frame: pd.DataFrame) -> pd.DataFrame:
 
 
 def parse_batch_csv(payload: bytes) -> pd.DataFrame:
-    """Parse a bounded CSV, rejecting duplicate names before pandas mangles them."""
+    """Check bytes and logical CSV records before materializing the feature table."""
     if len(payload) > MAX_UPLOAD_BYTES:
         raise ValueError("CSV exceeds the 5 MiB upload limit.")
     try:
-        header = next(csv.reader(io.StringIO(payload.decode("utf-8-sig"), newline="")))
-    except (StopIteration, UnicodeError, csv.Error) as error:
-        raise ValueError("CSV is empty or is not valid UTF-8 text.") from error
-    if len(header) != len(set(header)):
-        raise ValueError("CSV contains duplicate column names.")
-    try:
-        frame = pd.read_csv(io.BytesIO(payload))
-    except pd.errors.ParserError as error:
-        raise ValueError(f"CSV parsing failed: {error}") from error
-    if len(frame) > MAX_UPLOAD_ROWS:
-        raise ValueError("CSV exceeds the 5,000-row screening limit.")
-    return frame
+        with io.TextIOWrapper(io.BytesIO(payload), encoding="utf-8-sig", newline="") as stream:
+            records = (row for row in csv.reader(stream, strict=True) if row)
+            header = next(records, None)
+            if not header or any(not name.strip() for name in header):
+                raise ValueError("CSV requires a nonempty header with named columns.")
+            if len(header) != len(set(header)):
+                raise ValueError("CSV contains duplicate column names.")
+            for position, row in enumerate(records, start=1):
+                if position > MAX_UPLOAD_ROWS:
+                    raise ValueError("CSV exceeds the 5,000-row screening limit.")
+                if len(row) != len(header):
+                    raise ValueError(f"Input row {position} has a different field count from the header.")
+    except (UnicodeError, csv.Error) as error:
+        raise ValueError(f"Invalid UTF-8 CSV: {error}") from error
+
+    # Keep identifier text verbatim (e.g. 00042 or NA). Infer only ML features.
+    identifiers = {name: str for name in header if name not in REQUIRED_COLUMNS}
+    return pd.read_csv(io.BytesIO(payload), converters=identifiers, keep_default_na=False)
 
 
 def score_batch(frame: pd.DataFrame, pipeline: object, threshold: float) -> pd.DataFrame:
@@ -121,3 +129,21 @@ def score_batch(frame: pd.DataFrame, pipeline: object, threshold: float) -> pd.D
     valid = validate_batch(frame)
     scores = predict_risk(valid, pipeline, threshold=threshold)
     return pd.concat([valid.reset_index(drop=True), scores.reset_index(drop=True)], axis=1)
+
+
+def build_review_queue(scored: pd.DataFrame, *, flagged_only: bool, top_k: int) -> pd.DataFrame:
+    """Rank scored CSV records, retaining one-based source positions and all input columns."""
+    if top_k < 1:
+        raise ValueError("top_k must be positive.")
+    row_id = "input_row"
+    while row_id in scored.columns:
+        row_id = "_" + row_id
+    queue = scored.copy(deep=False)
+    queue.insert(0, row_id, range(1, len(scored) + 1))
+    if flagged_only:
+        queue = queue.loc[queue["review_decision"]]
+    queue = queue.sort_values("fraud_probability", ascending=False, kind="stable").head(top_k)
+    outputs = ["fraud_probability", "review_decision", "risk_tier"]
+    identifiers = [col for col in scored if col not in REQUIRED_COLUMNS and col not in outputs]
+    features = [col for col in scored if col in REQUIRED_COLUMNS]
+    return queue[[row_id, *identifiers, *outputs, *features]]
